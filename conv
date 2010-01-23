@@ -1,0 +1,4 @@
+#!/bin/env fish
+
+ghc --make Main -O -o hs2bf; and ./hs2bf
+
