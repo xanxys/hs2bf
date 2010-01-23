@@ -17,8 +17,8 @@ main=do
         ParseFailed loc msg -> putStrLn ("@"++show loc) >> putStrLn msg
         ParseOk c ->
             print c >> putStrLn "\n==========\n" >>
-            putStrLn (prettyPrint (wds c)) >>putStrLn "\n==========\n" >>
-            print (wds c)
+            putStrLn (prettyPrint (mds $ wds c)) >>putStrLn "\n==========\n" >>
+            print (mds $ wds c)
 
 
 -- | Core language - desugared Haskell
@@ -50,28 +50,6 @@ type CrName=String
 
 
 
--- | Convert decl-level pattern bindings to case
--- target: HsFunBind
--- cond: must be unguarded
-unpatDecl :: HsDecl -> HsDecl
-unpatDecl (HsPatBind loc pat rhs ds)=HsPatBind loc pat rhs ds
-unpatDecl (HsFunBind ms)=HsFunBind [HsMatch loc0 n0 [HsPTuple $ map HsPVar args] (HsUnGuardedRhs expr) []]
-    where
-        HsMatch loc0 n0 ps0 _ _=head ms
-        args=map (HsIdent . ("#arg"++) . show) [0..length ps0-1]
-        expr=HsCase (HsTuple $ map (HsVar . UnQual) args) $ map genAlt ms
-        
-        genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) decls)=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) decls
-        genAlt _=error "must unguard before unpatDecl"
-unpatDecl d=d
-
-
-
-
--- | Core routine of unguarding (nested if generation)
-unguardG :: (a -> (HsExp,HsExp)) -> [a] -> HsExp
-unguardG _ []=HsVar $ UnQual $ HsIdent "undefined"
-unguardG f (x:xs)=let (cond,exp)=f x in HsIf cond exp $ unguardG f xs
 
 
 
@@ -96,30 +74,43 @@ instance MidDesugar HsModule where
     mds (HsModule loc mod exp imp ds)=HsModule loc mod exp imp (map mds ds)
 
 instance MidDesugar HsDecl where
-    mds (HsFunBind ms)=HsFunBind $ map wds ms
-    mds (HsPatBind loc pat rhs decls)=HsPatBind loc (wds pat) (wds rhs) (map wds decls)
+    mds (HsFunBind ms)=mergeMatches $ map mds ms
+    mds (HsPatBind loc pat (HsUnGuardedRhs e) decls)
+        =HsPatBind loc (mds pat) (HsUnGuardedRhs $ mds $ moveDecls e decls) []
     mds d=d
 
 instance MidDesugar HsExp where
-    mds (HsCase e als)=HsCase (wds e) (map wds als)
-    mds (HsLet decls e)=HsLet (map wds decls) e
+    mds (HsCase e als)=HsCase (mds e) (map mds als)
+    mds (HsLet decls e)=HsLet (map mds decls) (mds e)
+    mds (HsLambda loc ps e)=HsLambda loc (map mds ps) (mds e)
+    mds e=e
 
 instance MidDesugar HsMatch where
-    mds (HsMatch loc name ps rhs decls)=HsMatch loc name (map mds ps) (mds rhs) (map mds decls)
+    mds (HsMatch loc name ps (HsUnGuardedRhs e) decls)
+        =HsMatch loc name (map mds ps) (HsUnGuardedRhs $ mds $ moveDecls e decls) []
 
 instance MidDesugar HsPat where
     mds (HsPParen p)=wds p
     mds p=p
 
 instance MidDesugar HsAlt where
-    mds (HsAlt loc pat al decls)=HsAlt loc (mds pat) (mds al) (map mds decls)
+    mds (HsAlt loc pat (HsUnGuardedAlt e) decls)
+        =HsAlt loc (mds pat) (HsUnGuardedAlt $ mds $ moveDecls e decls) []
 
-instance MidDesugar HsGuardedAlts where
-    mds (HsUnGuardedAlt e)=HsUnGuardedAlt $ mds e
 
-instance MidDesugar HsRhs where
-    mds (HsUnGuardedRhs e)=HsUnGuardedRhs $ mds e
+moveDecls :: HsExp -> [HsDecl] -> HsExp
+moveDecls e []=e
+moveDecls e ds=HsLet ds e
 
+mergeMatches :: [HsMatch] -> HsDecl
+mergeMatches [m]=HsFunBind [m]
+mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs expr) []]
+    where
+        HsMatch loc0 n0 ps0 _ _=head ms
+        args=map (HsIdent . ("#a"++) . show) [0..length ps0-1]
+        expr=HsCase (HsTuple $ map (HsVar . UnQual) args) $ map genAlt ms
+        
+        genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) []
     
 
 -- | "shallow" desugaring
@@ -146,13 +137,18 @@ instance WeakDesugar HsExp where
         [HsAlt wdsDummySrc (HsPVar (HsIdent "True")) (HsUnGuardedAlt (wds e0)) []
         ,HsAlt wdsDummySrc (HsPVar (HsIdent "False")) (HsUnGuardedAlt (wds e1)) []]
     wds (HsCase e als)=HsCase (wds e) (map wds als)
+    wds (HsLambda loc ps e)=HsLambda loc (map wds ps) (wds e)
     wds e=e
 
 instance WeakDesugar HsMatch where
     wds (HsMatch loc name ps rhs decls)=HsMatch loc name (map wds ps) (wds rhs) (map wds decls)
 
 instance WeakDesugar HsPat where
+    wds (HsPInfixApp p0 q p1)=HsPApp q [wds p0,wds p1]
     wds (HsPParen p)=wds p
+    wds (HsPList ps)=HsPList (map wds ps)
+    wds (HsPTuple ps)=HsPTuple (map wds ps)
+    wds (HsPApp n ps)=HsPApp n (map wds ps)
     wds p=p
 
 instance WeakDesugar HsAlt where
@@ -168,6 +164,11 @@ instance WeakDesugar HsRhs where
     wds (HsUnGuardedRhs e)=HsUnGuardedRhs $ wds e
     wds (HsGuardedRhss rs)=HsUnGuardedRhs $ wds $ unguardG (\(HsGuardedRhs _ c e)->(c,e)) rs
 
+
+-- | Generic unguarding routine (nested if generation)
+unguardG :: (a -> (HsExp,HsExp)) -> [a] -> HsExp
+unguardG _ []=HsVar $ UnQual $ HsIdent "undefined"
+unguardG f (x:xs)=let (cond,exp)=f x in HsIf cond exp $ unguardG f xs
 
 
 
