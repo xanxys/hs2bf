@@ -44,8 +44,30 @@ data Integer=Integer [Byte]
 (Integer [])+xs=xs
 xs+(Integer [])=xs
 
+{-
+enumFrom :: a -> [a]	Source
+Used in Haskell's translation of [n..].
+enumFromThen :: a -> a -> [a]	Source
+Used in Haskell's translation of [n,n'..].
+enumFromTo :: a -> a -> [a]	Source
+Used in Haskell's translation of [n..m].
+enumFromThenTo :: a -> a -> a -> [a]
+-}
 
 -- primitives:
 --  Byte
 --  lt,gt,add,sub
-
+xyz=undefined
+    where
+        x x=[0..1]
+        x y=[0..1]
+mergeMatches :: [HsMatch] -> HsDecl
+mergeMatches [m]=HsFunBind [m]
+mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs expr) []]
+    where
+        HsMatch loc0 n0 ps0 _ _=head ms
+        args=map (HsIdent . ("#a"++) . show) [0..length ps0-1]
+        expr=HsCase (HsTuple $ map (HsVar . UnQual) args) $ map genAlt ms
+        
+        genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) []
+    
