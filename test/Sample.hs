@@ -44,6 +44,11 @@ data Integer=Integer [Byte]
 (Integer [])+xs=xs
 xs+(Integer [])=xs
 
+
+
+
+x:xs=[1..]
+    
 {-
 enumFrom :: a -> [a]	Source
 Used in Haskell's translation of [n..].
