@@ -6,12 +6,14 @@
 --   Shallow desugaring (including unguarding, if removal,)
 --
 -- [2. 'MidDesugar' :: Hs -> Hs]
---   A little bit deep desugaring (where -> let, pattern -> case, merge FunBinds)
+--   A little bit deep desugaring (where -> let, pattern(PatBind,Lambda) -> case, merge FunBinds)
 --   introduces dummy variables
 --
--- [(2.1 ResolveModule)]
+-- [3. 'mergeModules' :: \[Hs\] -> Hs]
+--   Resolve all name references and make them 'UnQual'.
+--   Unknown identifiers are detected in this process.
 --
--- [3. 'sds' :: Hs -> CoreP]
+-- [4. 'sds' :: Hs -> 'CoreP']
 --   explicit pattern matching
 
 module Front where
@@ -26,6 +28,33 @@ import Core
 
 
 
+-- | Search all necesarry modules and parse them all (if possible).
+-- If an parser error occurs, parse as many other files as possible to report further errors.
+collectModules :: FilePath -> IO (Maybe [(FilePath,HsModule)])
+collectModules path=do
+    xs<-readFile path
+    let px=parseModuleWithMode (ParseMode path) xs
+    
+    case px of
+        ParseFailed loc msg -> putStrLn ("@"++show loc) >> putStrLn msg >> return Nothing
+        ParseOk c->
+--            print c >> putStrLn "\n==========\n" >>
+            putStrLn (prettyPrint (mds $ wds c)) >> putStrLn "\n==========\n" >>
+            print (mds $ wds c) >>
+            return (Just [(path,c)])
+
+
+
+
+
+{-
+
+-- complex pattern decomposition HsExp:case
+X (Y z w) y -> e
+->
+X #t0 y->case #t0 of Y zw -> e
+
+-}
 
 
 -- | /strong/ desugar
@@ -56,38 +85,26 @@ isPatBind _=False
 
 
 
-{-
--- PatBind elimination
-x:xs=f
-->
-#t0=f
-x=case #t0 of x:xs -> x
-xs=case #t0 of x:xs -> x
-
-
--- complex pattern decomposition
-X (Y z w) y -> e
-->
-X #t0 y->case #t0 of Y zw -> e
-
--}
 
 
 
 
 
 
--- sdsFun :: HsDecl -> CoreDecl
--- sdsFun (HsFunBind xxx)=
-
-
--- | Merge HsModules
+-- | Merge 'HsModule's.
 mergeModules :: [HsModule] -> HsModule
 mergeModules ms=HsModule (SrcLoc "<whole>" 0 0) (Module "<whole>") Nothing [] (concatMap f ms)
     where f (HsModule _ _ _ _ decls)=decls
 
 
 -- | /medium/ desugaring
+--
+-- * introduces dummy variables
+--
+-- * 'HsPat' is handled manually(not via 'mds').
+--
+--  You might find that 'HsLambda','HsPatBind'->'HsCase' conversion here duplicates 'sds'.
+-- But they're completely different because 'sds' considers evaluation sequence of 'HsAlt's.
 class MidDesugar a where
     mds :: a -> a
 
@@ -97,26 +114,22 @@ instance MidDesugar HsModule where
 instance MidDesugar HsDecl where
     mds (HsFunBind ms)=mergeMatches $ map mds ms
     mds (HsPatBind loc pat (HsUnGuardedRhs e) decls)
-        =HsPatBind loc (mds pat) (HsUnGuardedRhs $ mds $ moveDecls e decls) []
+        =HsPatBind loc pat (HsUnGuardedRhs $ mds $ moveDecls e decls) []
     mds d=d
 
 instance MidDesugar HsExp where
     mds (HsCase e als)=HsCase (mds e) (map mds als)
     mds (HsLet decls e)=HsLet (eliminatePBind $ map mds decls) (mds e)
-    mds (HsLambda loc ps e)=HsLambda loc (map mds ps) (mds e)
+    mds (HsLambda loc ps e)=eliminatePLambda $ HsLambda loc ps (mds e)
     mds e=e
 
 instance MidDesugar HsMatch where
     mds (HsMatch loc name ps (HsUnGuardedRhs e) decls)
-        =HsMatch loc name (map mds ps) (HsUnGuardedRhs $ mds $ moveDecls e decls) []
-
-instance MidDesugar HsPat where
-    mds (HsPParen p)=wds p
-    mds p=p
+        =HsMatch loc name ps (HsUnGuardedRhs $ mds $ moveDecls e decls) []
 
 instance MidDesugar HsAlt where
     mds (HsAlt loc pat (HsUnGuardedAlt e) decls)
-        =HsAlt loc (mds pat) (HsUnGuardedAlt $ mds $ moveDecls e decls) []
+        =HsAlt loc pat (HsUnGuardedAlt $ mds $ moveDecls e decls) []
 
 
 -- | Generate let with given decls and 'HsExp'
@@ -135,17 +148,40 @@ mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs exp
         expr=HsCase (HsTuple $ map (HsVar . UnQual) args) $ map genAlt ms
         
         genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) []
-    
 
-
--- | Eliminate HsPatBind
-eliminatePBind :: [HsDecl] -> [HsDecl]
-eliminatePBind ds=concat $ nps:zipWith convertPBind vars ps
+-- | Eliminate pattern matching in lambda arguments.
+eliminatePLambda :: HsExp -> HsExp
+eliminatePLambda (HsLambda loc ps e)=HsLambda loc (map fst vars) (f (map snd vars) e)
     where
-        vars=map (("#x"++) . show) [0..]
-        (ps,nps)=partition isPatBind ds
+        cat :: HsPat -> HsName -> (HsPat,Maybe (HsExp,HsPat))
+        cat p@(HsPVar v) _=(p,Nothing)
+        cat p r=(HsPVar r,Just (HsVar (UnQual r),p))
+        
+        vars=zipWith cat ps (map HsIdent $ stringSeq "#x")
+        
+        f :: [Maybe (HsExp,HsPat)] -> HsExp -> HsExp
+        f [] e=e
+        f (Nothing:vs) e=f vs e
+        f ((Just (v,p)):vs) e=HsCase v [HsAlt loc p (HsUnGuardedAlt $ f vs e) []]
 
--- | Convert HsPatBind to [HsFunBind] recursively.
+
+-- | Eliminate 'HsPatBind'
+-- x:xs=f
+-- ->
+-- #t0=f
+-- x=case #t0 of x:xs -> x
+-- xs=case #t0 of x:xs -> x
+--
+eliminatePBind :: [HsDecl] -> [HsDecl]
+eliminatePBind ds=concat $ zipWith convertPBind (stringSeq "#x") $ map convSimple ds
+
+
+-- | Convert obvious 'HsPatBind' to 'HsFunBind'
+convSimple :: HsDecl -> HsDecl
+convSimple (HsPatBind loc (HsPVar n) rhs [])=HsFunBind [HsMatch loc n [] rhs []]
+convSimple d=d
+
+-- | Convert 'HsPatBind' to ['HsFunBind'] recursively.
 -- operation:
 --
 --   from: T x y=z
@@ -158,7 +194,7 @@ convertPBind prefix (HsPatBind loc p0@(HsPApp n args) rhs [])=pre:concat (zipWit
     where
         pre=HsFunBind [HsMatch loc (HsIdent prefix) [] rhs []]
         
-        vars=map (((prefix++"/")++) . show) [0..]
+        vars=map (((prefix++"_")++) . show) [0..]
         
         f _ p@(HsPVar n)=maybeToList $ do e<-g p
                                           return $ HsFunBind [HsMatch loc n [] (HsUnGuardedRhs e) []]
@@ -169,10 +205,10 @@ convertPBind prefix (HsPatBind loc p0@(HsPApp n args) rhs [])=pre:concat (zipWit
         g :: HsPat -> Maybe HsExp
         g p=do e<-pat2con p
                return $ HsCase (HsVar (UnQual (HsIdent prefix))) [HsAlt loc p0 (HsUnGuardedAlt e) []]
-convertPBind prefix x=error $ show x
+convertPBind prefix x=[x]
 
 
--- | Literally convert HsPat to HsExp..
+-- | Literally convert 'HsPat' to 'HsExp'.
 pat2con :: HsPat -> Maybe HsExp
 pat2con (HsPVar n)=return $ HsVar (UnQual n)
 pat2con (HsPApp n vs)=liftM (multiApp $ HsVar n) (mapM pat2con vs)
@@ -184,7 +220,7 @@ pat2con HsPWildCard=Nothing
 
 
 
--- | /shallow/ desugaring
+-- | /weak/ desugaring
 class WeakDesugar a where
     wds :: a -> a
 
@@ -259,5 +295,17 @@ opToExp (HsQVarOp n)=HsVar n
 opToExp (HsQConOp n)=HsCon n
 
 multiApp :: HsExp -> [HsExp] -> HsExp
-multiApp=foldr HsApp
+multiApp=foldl HsApp
+
+-- | a b c ... z aa ab ac ... az ba ...
+-- avoid CAF.
+stringSeq :: String -> [String]
+stringSeq prefix=tail $ map ((prefix++) . reverse) $ iterate stringInc []
+
+stringInc :: String -> String
+stringInc []="a"
+stringInc ('z':xs)='a':stringInc xs
+stringInc (x:xs)=succ x:xs
+
+
 

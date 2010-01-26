@@ -13,6 +13,12 @@
 main :: E
 main=Halt
 
+
+f=(\(T x (C y ys)) z->z)
+
+Cons x (Cons y ys)=[1..]
+
+{-
 test []=1
     where y=2
 
@@ -27,9 +33,6 @@ xyz2 x|x==1 = 2
 f x y=x+y
 
 
--- TODO: (very rarely used)
--- numbers=[0..]
--- x:xs=numbers
 
 
 -- internal library
@@ -75,4 +78,5 @@ mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs exp
         expr=HsCase (HsTuple $ map (HsVar . UnQual) args) $ map genAlt ms
         
         genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) []
-    
+-}
+
