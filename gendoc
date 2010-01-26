@@ -1,3 +1,9 @@
 #!/bin/env fish
 
-haddock -h -o doc *.hs
+HsColour -print-css > doc/hscolour.css
+
+for i in *.hs
+    HsColour -odoc/$i.html -css -anchor $i
+end
+
+haddock -h --source-module="%F.html" --source-entity="%F.html#line-%L" -o doc *.hs
