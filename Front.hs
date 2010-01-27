@@ -2,24 +2,34 @@
 --
 -- design policy: minimize the amount of code
 --
+-- [0. 'collectModules' :: IO \[Hs\]]
+--   Parse necesarry modules.
+--
 -- [1. 'WeakDesugar' :: Hs -> Hs]
---   Shallow desugaring (including unguarding, if removal,)
+--   Shallow desugaring (including unguarding, if removal)
 --
 -- [2. 'MidDesugar' :: Hs -> Hs]
 --   A little bit deep desugaring (where -> let, pattern(PatBind,Lambda) -> case, merge FunBinds)
---   introduces dummy variables
+--   Introduces dummy variables
 --
 -- [3. 'mergeModules' :: \[Hs\] -> Hs]
 --   Resolve all name references and make them 'UnQual'.
 --   Unknown identifiers are detected in this process.
 --
 -- [4. 'sds' :: Hs -> 'CoreP']
---   explicit pattern matching
-
+--   Explicit pattern matching
+--
+-- Dummy variable naming convention:
+--
+-- * #aa_2... : arguments ('HsMatch')
+--
+-- * #xa_1... : pattern matching
 module Front where
 import Control.Monad
 import Data.List
 import Data.Maybe
+import qualified Data.Map as M
+import qualified Data.Set as S
 import Language.Haskell.Parser
 import Language.Haskell.Pretty
 import Language.Haskell.Syntax
@@ -40,8 +50,11 @@ collectModules path=do
         ParseOk c->
 --            print c >> putStrLn "\n==========\n" >>
             putStrLn (prettyPrint (mds $ wds c)) >> putStrLn "\n==========\n" >>
-            print (mds $ wds c) >>
+            putStrLn (pprintCoreP (sds $ mds $ wds c)) >> putStrLn "\n==========\n" >>
+--            print (mds $ wds c) >>
             return (Just [(path,c)])
+
+
 
 
 
@@ -58,15 +71,15 @@ X #t0 y->case #t0 of Y zw -> e
 
 
 -- | /strong/ desugar
--- replace all implicit pattern matching with explicit cases.
+-- Replaces all implicit pattern matching with explicit cases.
+-- Explicit modification of SrcLoc for error reporting in later process.
 sds :: HsModule -> CoreP
-sds (HsModule _ _ _ _ decls)
-    |null ps   = undefined
-    |otherwise = undefined
+sds (HsModule _ _ _ _ decls)=Core [] (map convDecl $ filter isFunBind decls)
     where
         ds=filter isDataDecl decls
         fs=filter isFunBind decls
-        ps=filter isPatBind decls
+
+
 
 
 
@@ -81,6 +94,123 @@ isPatBind _=False
 
 
 
+convDecl :: HsDecl -> CrProc (LocHint,Maybe CrType)
+convDecl (HsFunBind [HsMatch loc (HsIdent n) args (HsUnGuardedRhs e) []])
+    =CrProc (CrA (h,Nothing) n) (map f args) (convExp h e)
+    where
+        f (HsPVar (HsIdent x))=CrA (h,Nothing) x
+        
+        h=showLoc loc
+
+convExp :: LocHint -> HsExp -> CrAExprP
+convExp _ (HsLambda loc as e)=CrA (h,Nothing) $ CrLm (map f as) (convExp h e)
+    where
+        f (HsPVar (HsIdent x))=CrA (h,Nothing) x
+        h=showLoc loc
+convExp h (HsVar (UnQual (HsIdent x)))=CrA (h,Nothing) (CrVar x)
+convExp h (HsApp e0 e1)=CrA (h,Nothing) $ CrApp (convExp h e0) (convExp h e1)
+convExp h e@(HsCase _ _)=convFullCase h e
+-- convExp h (HsExpTyeSig
+convExp h (HsLit (HsInt n))=CrA (h,Nothing) $ CrInt $ fromIntegral n
+convExp _ e=error $ "ERROR:convExp:"++show e
+
+
+
+
+type CrAExprP=CrAExpr (LocHint,Maybe CrType)
+
+-- | Convert 'HsCase'(desugared) to 'CrExpr'
+-- Sort 'HsAlt's by constructor and use 'procPartialCase' for each constructor.
+--
+-- One of the following:
+--
+-- * HsAlt (HsPApp ...
+--
+-- * HsAlt (HsPVar ...
+convFullCase :: LocHint -> HsExp -> CrAExprP
+convFullCase h (HsCase e as)=CrA (h,Nothing) $ CrCase (convExp h e) (map f $ M.assocs m')
+    where
+        m'=M.delete "" m
+        m0=case M.lookup "" m of
+               Nothing -> CrA (h,Nothing) $ CrVar "undefined"
+               Just (_,[(_,x)]) -> x
+        m=M.map (\(arity,xs)->(arity,map (\(ps,e)->(ps,convExp h e)) xs)) $ sortAlts as
+        
+        f (cons,(arity,as))=let vs=take arity $ stringSeq "#x"
+                            in (cons,map (CrA (h,Nothing)) vs,convSeqCase m0 (map (CrA (h,Nothing) . CrVar) vs) as)
+            
+
+
+
+-- | Transform case of multiple vars. Note that constructors are already removed by 'procFullCase'.
+-- example:
+--  @
+--  case v1 v2 v3 of
+--      p11 p12 p13 -> e1
+--      p21 p22 p23 -> e2
+--      _           -> fail
+--  @
+-- to
+--  @
+--  case v1 v2 v3 of
+--      p11 p12 p13 -> e1
+--      _ -> case v1 v2 v3 of
+--               p21 p22 p23 -> e2
+--               _ -> fail
+--  @
+convSeqCase :: CrAExprP -> [CrAExprP] -> [([HsPat],CrAExprP)] -> CrAExprP
+convSeqCase fail vs []=fail
+convSeqCase fail vs ((ps,e):as)=convAndCase (convSeqCase fail vs as) e (zip vs ps)
+
+-- | Transform multiple vars to
+-- @
+-- case v1 v2 v3 of
+--     p1 u2 p3 -> succ
+-- @
+-- to
+-- @
+-- case v1 of
+--     p1 -> let u2=v2 in
+--           case v3 of
+--               p3 -> succ
+--               _  -> fail(other 'HsAlt')
+--     _ -> fail(other 'HsAlt')
+-- @
+convAndCase :: CrAExprP -> CrAExprP -> [(CrAExprP,HsPat)] -> CrAExprP
+convAndCase fail succ []=succ
+convAndCase fail succ ((v,pat):cs)=CrA ("?",Nothing) $ case pat of
+    HsPVar (HsIdent p) ->
+        CrLet False [(CrA ("?",Nothing) p,v)] next
+    HsPApp (UnQual (HsIdent n)) args ->
+        CrCase v [(n,[CrA ("?",Nothing) ""],next),("",[],fail)]
+    where next=convAndCase fail succ cs
+
+
+-- | Sort ['HsAlt'] by constructors.
+sortAlts :: [HsAlt] -> M.Map String (Int,[([HsPat],HsExp)])
+sortAlts []=M.empty
+sortAlts ((HsAlt loc pat (HsUnGuardedAlt e) []):as)=
+    case pat of
+        HsPApp (UnQual (HsIdent n)) args -> 
+            M.insertWith merge n (length args,[(args,e)]) m
+        _ -> M.singleton "" (0,[([],e)])
+    where
+        merge (n0,xs0) (n1,xs1)=if n0==n1 then (n0,xs0++xs1) else error $ "Unmatched arity@"++show loc
+        m=sortAlts as
+
+
+
+showLoc :: SrcLoc -> LocHint
+showLoc (SrcLoc file line col)=concat [file,":",show line,":",show col,":"]
+-- convExp (HsCase e as)=CrCase 
+
+
+
+-- HsDecl with location:
+--   HsFun: HsGurardedRhs
+-- HsExp with location:
+--   HsLambda,HsExpTypeSig,
+--   HsCase(HsAlt)
 
 
 
@@ -89,9 +219,7 @@ isPatBind _=False
 
 
 
-
-
--- | Merge 'HsModule's.
+-- | Merge 'HsModule's. TODO: implement qualification resolver.
 mergeModules :: [HsModule] -> HsModule
 mergeModules ms=HsModule (SrcLoc "<whole>" 0 0) (Module "<whole>") Nothing [] (concatMap f ms)
     where f (HsModule _ _ _ _ decls)=decls
@@ -173,7 +301,7 @@ eliminatePLambda (HsLambda loc ps e)=HsLambda loc (map fst vars) (f (map snd var
 -- xs=case #t0 of x:xs -> x
 --
 eliminatePBind :: [HsDecl] -> [HsDecl]
-eliminatePBind ds=concat $ zipWith convertPBind (stringSeq "#x") $ map convSimple ds
+eliminatePBind ds=concat $ zipWith (convertPBind True) (stringSeq "#x") $ map convSimple ds
 
 
 -- | Convert obvious 'HsPatBind' to 'HsFunBind'
@@ -188,24 +316,25 @@ convSimple d=d
 --
 --   to: #=z; x=case # of T x y -> x; y=case # of T x y -> y
 --
-convertPBind :: String -> HsDecl -> [HsDecl]
-convertPBind _ (HsPatBind loc (HsPVar n) rhs [])=[HsFunBind [HsMatch loc n [] rhs []]]
-convertPBind prefix (HsPatBind loc p0@(HsPApp n args) rhs [])=pre:concat (zipWith f vars args)
+convertPBind :: Bool -> String -> HsDecl -> [HsDecl]
+convertPBind _ _ (HsPatBind loc (HsPVar n) rhs [])=[HsFunBind [HsMatch loc n [] rhs []]]
+convertPBind flag prefix (HsPatBind loc p0@(HsPApp n args) rhs [])
+    |flag      = pre:concat (zipWith3 f vars p0s args)
+    |otherwise = concat (zipWith3 f vars p0s args)
     where
         pre=HsFunBind [HsMatch loc (HsIdent prefix) [] rhs []]
         
         vars=map (((prefix++"_")++) . show) [0..]
+        p0s=map (HsPApp n) $ change1 (map (HsPVar . HsIdent) vars) args
         
-        f _ p@(HsPVar n)=maybeToList $ do e<-g p
-                                          return $ HsFunBind [HsMatch loc n [] (HsUnGuardedRhs e) []]
-        f vn p=case g p of
-                   Nothing -> []
-                   Just e -> convertPBind vn (HsPatBind loc p (HsUnGuardedRhs e) [])
+        f _ _ p@(HsPVar (HsIdent n))=[genDecl n p0]
+        f v p0' p=genDecl v p0':convertPBind False v (HsPatBind loc p (HsUnGuardedRhs (stdVar v)) [])
         
-        g :: HsPat -> Maybe HsExp
-        g p=do e<-pat2con p
-               return $ HsCase (HsVar (UnQual (HsIdent prefix))) [HsAlt loc p0 (HsUnGuardedAlt e) []]
-convertPBind prefix x=[x]
+        genDecl :: String -> HsPat -> HsDecl
+        genDecl v p=HsFunBind [HsMatch loc (HsIdent v) [] (HsUnGuardedRhs e) []]
+            where e=HsCase (stdVar prefix) [HsAlt loc p (HsUnGuardedAlt (stdVar v)) []]
+
+convertPBind _ prefix x=[x]
 
 
 -- | Literally convert 'HsPat' to 'HsExp'.
@@ -250,7 +379,10 @@ instance WeakDesugar HsExp where
     wds (HsEnumFromTo e0 e1)=HsApp (HsApp (stdVar "enumFromTo") (wds e0)) (wds e1)
     wds (HsEnumFromThen e0 e1)=HsApp (HsApp (stdVar "enumFromThen") (wds e0)) (wds e1)
     wds (HsEnumFromThenTo e0 e1 e2)=HsApp (HsApp (HsApp (stdVar "enumFromThen") (wds e0)) (wds e1)) (wds e2)
+    wds (HsCon f)=HsVar f
+    wds (HsVar v)=HsVar v
     wds e=e
+--    wds e=error $ "WeakDesugar:unsupported expression:"++show e
 
 instance WeakDesugar HsMatch where
     wds (HsMatch loc name ps rhs decls)=HsMatch loc name (map wds ps) (wds rhs) (map wds decls)
@@ -307,5 +439,14 @@ stringInc []="a"
 stringInc ('z':xs)='a':stringInc xs
 stringInc (x:xs)=succ x:xs
 
-
+-- | usage
+--
+-- > change1 "XYZ" "abc"
+--
+-- evaluates to
+--
+-- > ["Xbc","aYc","abZ"]
+change1 :: [a] -> [a] -> [[a]]
+change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
+change1 _ _=[]
 
