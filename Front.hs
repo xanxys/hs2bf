@@ -26,6 +26,7 @@
 -- * #xa_1... : pattern matching
 module Front where
 import Control.Monad
+import Data.Char
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
@@ -99,8 +100,10 @@ convDecl (HsFunBind [HsMatch loc (HsIdent n) args (HsUnGuardedRhs e) []])
     =CrProc (CrA (h,Nothing) n) (map f args) (convExp h e)
     where
         f (HsPVar (HsIdent x))=CrA (h,Nothing) x
+        f x=error $ show x
         
         h=showLoc loc
+convDecl d=error $ "convDecl:ERROR:"++show d
 
 convExp :: LocHint -> HsExp -> CrAExprP
 convExp _ (HsLambda loc as e)=CrA (h,Nothing) $ CrLm (map f as) (convExp h e)
@@ -112,6 +115,7 @@ convExp h (HsApp e0 e1)=CrA (h,Nothing) $ CrApp (convExp h e0) (convExp h e1)
 convExp h e@(HsCase _ _)=convFullCase h e
 -- convExp h (HsExpTyeSig
 convExp h (HsLit (HsInt n))=CrA (h,Nothing) $ CrInt $ fromIntegral n
+convExp h (HsLit (HsChar ch))=CrA (h,Nothing) $ CrByte $ fromIntegral $ ord ch
 convExp _ e=error $ "ERROR:convExp:"++show e
 
 
@@ -273,7 +277,7 @@ mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs exp
     where
         HsMatch loc0 n0 ps0 _ _=head ms
         args=map (HsIdent . ("#a"++) . show) [0..length ps0-1]
-        expr=HsCase (HsTuple $ map (HsVar . UnQual) args) $ map genAlt ms
+        expr=HsCase (multiApp (stdTuple $ length args) $ map (HsVar . UnQual) args) $ map genAlt ms
         
         genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) []
 
@@ -365,7 +369,7 @@ instance WeakDesugar HsDecl where
 
 instance WeakDesugar HsExp where
     wds (HsApp e0 e1)=HsApp (wds e0) (wds e1)
-    wds (HsInfixApp e0 op e1)=HsApp (HsApp (opToExp op) (wds e0)) (wds e1)
+    wds (HsInfixApp e0 op e1)=HsApp (HsApp (wds $ opToExp op) (wds e0)) (wds e1)
     wds (HsNegApp e)=HsApp (HsVar (UnQual (HsIdent "negate"))) e
     wds (HsParen e)=wds e
     wds (HsLeftSection e op)=HsApp (opToExp op) (wds e)
@@ -374,26 +378,52 @@ instance WeakDesugar HsExp where
         [HsAlt wdsDummySrc (HsPVar (HsIdent "True")) (HsUnGuardedAlt (wds e0)) []
         ,HsAlt wdsDummySrc (HsPVar (HsIdent "False")) (HsUnGuardedAlt (wds e1)) []]
     wds (HsCase e als)=HsCase (wds e) (map wds als)
+    wds (HsLet decls e)=HsLet (map wds decls) (wds e)
     wds (HsLambda loc ps e)=HsLambda loc (map wds ps) (wds e)
     wds (HsEnumFrom e)=HsApp (stdVar "enumFrom") (wds e)
     wds (HsEnumFromTo e0 e1)=HsApp (HsApp (stdVar "enumFromTo") (wds e0)) (wds e1)
     wds (HsEnumFromThen e0 e1)=HsApp (HsApp (stdVar "enumFromThen") (wds e0)) (wds e1)
     wds (HsEnumFromThenTo e0 e1 e2)=HsApp (HsApp (HsApp (stdVar "enumFromThen") (wds e0)) (wds e1)) (wds e2)
-    wds (HsCon f)=HsVar f
+    wds (HsCon f)=wds $ HsVar f
+    wds (HsVar (Special HsCons))=stdVar ":"
+    wds (HsVar (UnQual (HsSymbol v)))=HsVar (UnQual (HsIdent v))
     wds (HsVar v)=HsVar v
-    wds e=e
---    wds e=error $ "WeakDesugar:unsupported expression:"++show e
+    wds (HsTuple es)=multiApp (stdTuple $ length es) (map wds es)
+    wds (HsList es)=foldr (\x y->HsApp (wds x) y) (stdVar "[]") es
+    wds (HsLit (HsString s))=wds $ HsList $ map (HsLit . HsChar) s
+    wds l@(HsLit _)=l
+    wds e=error $ "WeakDesugar:unsupported expression:"++show e
 
 instance WeakDesugar HsMatch where
-    wds (HsMatch loc name ps rhs decls)=HsMatch loc name (map wds ps) (wds rhs) (map wds decls)
+    wds (HsMatch loc name ps rhs decls)=HsMatch loc (wds name) (map wds ps) (wds rhs) (map wds decls)
+
+
+instance WeakDesugar HsName where
+    wds (HsSymbol x)=HsIdent x
+    wds n=n
+
+instance WeakDesugar HsQName where
+    wds (Qual mod n)=Qual mod (wds n)
+    wds (UnQual n)=UnQual (wds n)
+    wds (Special sc)=UnQual $ HsIdent n
+        where n=case sc of
+                    HsUnitCon->"#T0"
+                    HsListCon->"[]"
+                    HsFunCon->"->"
+                    HsTupleCon n->"#T"++show n
+                    HsCons->":"
 
 instance WeakDesugar HsPat where
-    wds (HsPInfixApp p0 q p1)=HsPApp q [wds p0,wds p1]
+    wds (HsPInfixApp p0 q p1)=HsPApp (wds q) [wds p0,wds p1]
     wds (HsPParen p)=wds p
     wds (HsPList ps)=HsPList (map wds ps)
-    wds (HsPTuple ps)=HsPTuple (map wds ps)
-    wds (HsPApp n ps)=HsPApp n (map wds ps)
-    wds p=p
+    wds (HsPTuple ps)=HsPApp (UnQual (HsIdent $ "#T"++show (length ps))) (map wds ps)
+    wds (HsPApp n ps)=HsPApp (wds n) (map wds ps)
+    wds (HsPVar n)=HsPVar $ wds n
+    wds (HsPWildCard)=HsPWildCard
+--    wds p=p
+    wds p=error $ "WeakDesugar:unsupported HsPat:"++show p
+
 
 instance WeakDesugar HsAlt where
     wds (HsAlt loc pat al decls)=HsAlt loc (wds pat) (wds al) (map wds decls)
@@ -421,6 +451,9 @@ wdsDummySrc=SrcLoc "<WeakDesugar>" 0 0
 
 stdVar :: String -> HsExp
 stdVar=HsVar . UnQual . HsIdent
+
+stdTuple :: Int -> HsExp
+stdTuple=stdVar . ("#T"++) . show
 
 opToExp :: HsQOp -> HsExp
 opToExp (HsQVarOp n)=HsVar n

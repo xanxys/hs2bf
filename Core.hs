@@ -67,6 +67,7 @@ pprintExpr f (CrLet flag binds e)=SBlock $ (SPrim $ if flag then "letrec" else "
     where cv (v,e)=SBlock [pprintAName f v,SPrim "=",pprintAExpr f e]
 pprintExpr f (CrApp e0 e1)=SBlock [SPrim "(",pprintAExpr f e0,SSpace,pprintAExpr f e1,SPrim ")"]
 pprintExpr f (CrInt n)=SPrim $ show n
+pprintExpr f (CrByte n)=SPrim $ show n
 -- pprintExpr f (Cr
 pprintExpr f e=error $ "pprintExpr:"++show e
 

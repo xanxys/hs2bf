@@ -13,7 +13,7 @@ import Front
 
 
 main=do
-    collectModules "./test/Sample.hs"
+    collectModules "./test/ComplexFibonacci.hs"
 
 
 
