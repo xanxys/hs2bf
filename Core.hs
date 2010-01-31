@@ -14,6 +14,7 @@
 module Core where
 import Data.List
 
+import GMachine
 
 type CoreP=Core (LocHint,Maybe CrKind) (LocHint,Maybe CrType)
 type LocHint=String
