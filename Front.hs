@@ -57,20 +57,6 @@ collectModules path=do
 
 
 
-
-
-
-
-{-
-
--- complex pattern decomposition HsExp:case
-X (Y z w) y -> e
-->
-X #t0 y->case #t0 of Y zw -> e
-
--}
-
-
 -- | /strong/ desugar
 -- Replaces all implicit pattern matching with explicit cases.
 -- Explicit modification of SrcLoc for error reporting in later process.
@@ -209,12 +195,6 @@ showLoc (SrcLoc file line col)=concat [file,":",show line,":",show col,":"]
 -- convExp (HsCase e as)=CrCase 
 
 
-
--- HsDecl with location:
---   HsFun: HsGurardedRhs
--- HsExp with location:
---   HsLambda,HsExpTypeSig,
---   HsCase(HsAlt)
 
 
 

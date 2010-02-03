@@ -1,5 +1,10 @@
 -- | Decide what to do.
 --
+-- Overall design policy:
+--
+-- * All intermediate-languages should be interpretable in 'IO' monad with exactly same behavior.
+--
+--
 -- [1. Interpreter]
 --   interpret given code.
 --
@@ -13,7 +18,8 @@ import Front
 
 
 main=do
-    collectModules "./test/ComplexFibonacci.hs"
+    ms<-collectModules "./test/Echo.hs"
+    
 
 
 

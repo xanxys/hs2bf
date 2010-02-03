@@ -8,13 +8,22 @@
 --
 -- * type-inference
 --
--- * lambda-lifting
+-- * dependency-analysis
+--
+-- * MFE-detection
+--
+-- * lambda lifting
 --
 -- are done in Core language
 module Core where
+import Data.Foldable
 import Data.List
+import qualified Data.Map as M
+import Data.Sequence((><))
+import qualified Data.Sequence as S
 
 import GMachine
+
 
 type CoreP=Core (LocHint,Maybe CrKind) (LocHint,Maybe CrType)
 type LocHint=String
@@ -23,6 +32,40 @@ type LocHint=String
 data Core a b=Core [CrData a] [CrProc b]
 data CrData a=CrData CrName [(CrAName a)] [(CrName,[CrAnnot a CrType])]
 data CrProc a=CrProc (CrAName a) [(CrAName a)] (CrAExpr a)
+
+
+
+compile :: Core a b -> M.Map String [GMCode]
+compile (Core ds ps)=M.fromList $ map compileP ps
+
+-- | Compile one super combinator to 'GMCode'
+-- requirement:
+--
+-- * must not contain lambda
+--
+compileP :: CrProc a -> (String,[GMCode])
+compileP (CrProc name args expr)=
+    (unA name,adjustStack $ toList $ compileE m (unA expr)><S.singleton (Slide n))
+    where
+        n=length args
+        m=M.fromList $ zip (map unA args) [1..]
+
+compileE :: M.Map String Int -> CrExpr a -> S.Seq GMCode 
+compileE m (CrApp e0 e1)=compileE m (unA e0)><compileE m (unA e1)><S.singleton MkApp
+compileE m (CrVar v)=S.singleton $ maybe (PushSC v) Push $ M.lookup v m
+compileE m (CrByte x)=S.singleton $ PushByte x
+
+
+adjustStack :: [GMCode] -> [GMCode]
+adjustStack=aux 0
+    where
+        aux d []=[]
+        aux d (Push n:cs)=Push (d+n):aux (d+1) cs
+        aux d (MkApp:cs)=MkApp:aux (d-1) cs
+
+
+
+
 
 
 -- | Pretty printer for 'CoreP'
@@ -122,8 +165,12 @@ data CrAnnot a s=CrA a s deriving(Show)
 type CrAName a=CrAnnot a CrName
 type CrAExpr a=CrAnnot a (CrExpr a)
 
+unA (CrA _ s)=s
+
 -- | 
 type CrName=String
+
+
 
 
 

@@ -1,7 +1,10 @@
 -- | Brainfuck(BF2,BF1,BF0) optimizer
+--
 -- Cost model of BF.
--- All instructions are executed in a common constant duration.
--- Input command requires unknown latency in addition to it.
+--
+-- * All instructions are executed in a common constant duration.
+--
+-- * Input command requires unknown latency in addition to it.
 module Brainfuck where
 import Control.Monad
 import Data.Array.IO
@@ -24,9 +27,9 @@ data BF0
 --
 -- * [0,+inf) address space
 --
--- * Each cell consists of a byte. Inc,Dec are handled with modulo 0x100.
+-- * Each cell consists of a byte which represents Z256.
 --
--- * Accessing negative memory causes error.
+-- * Moving into negative address immediately causes an error.
 interpretBF0 :: [BF0] -> IO ()
 interpretBF0 is=newArray (0,1000) 0 >>= evalBF0 (detectLoop is) 0
 
