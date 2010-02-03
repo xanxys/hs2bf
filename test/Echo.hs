@@ -1,5 +1,3 @@
-
--- echo
-main :: List Char -> List Char
-main=id
+main=Input f
+f x=Output x main
 
