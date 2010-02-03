@@ -13,10 +13,15 @@
 --
 -- In both modes, detailed error-checking using GHC are available via --with-ghc switch.
 module Main where
+import Language.Haskell.Pretty
 import System.Environment
+import System.FilePath.Posix
 
 import Error
 import Front
+import Core
+import GMachine
+import Brainfuck
 
 
 main=getArgs >>= execArgs
@@ -50,12 +55,38 @@ run ("--run":mod:opts)=do
 run _=putStrLn "illegal options for --run"
 
 make ("--make":mod:opts)=do
-    collectModules (modToPath mod)
+    let lang=analyzeOpt opts
+    let (modname,env)=analyzeName mod
     
+    x<-collectModules env modname
+    case x of
+        Left es -> putStr $ unlines $ map show es
+        Right [m] ->
+            putStrLn (prettyPrint (mds $ wds m)) >> putStrLn "\n==========\n" >>
+            putStrLn (pprintCoreP (sds $ mds $ wds m)) >> putStrLn "\n==========\n"
 make _=putStrLn "illegal options for --make"
 
 
+analyzeName :: String -> (String,ModuleEnv)
+analyzeName n=(takeBaseName n,ModuleEnv [dirPrefix++takeDirectory n])
+    where dirPrefix=if isAbsolute n then "" else "./"
 
-modToPath :: String -> IO FilePath
-modToPath name=return $ "./"++name++".hs"
+
+analyzeOpt :: [String] -> Language
+analyzeOpt []=LangBF0
+analyzeOpt ("-Sc":xs)=LangCore
+analyzeOpt ("-Sm":xs)=LangGMachine
+analyzeOpt ("-Sb0":xs)=LangBF0
+analyzeOpt (x:xs)=analyzeOpt xs
+
+
+
+
+
+data Language
+    =LangCore
+    |LangGMachine
+    |LangBF0
+    deriving(Show,Eq,Ord)
+
 

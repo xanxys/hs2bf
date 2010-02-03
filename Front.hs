@@ -1,4 +1,4 @@
--- | Haskell -> 'CoreP' desugarer
+-- | Frontend: Haskell -> 'CoreP' desugarer
 --
 -- design policy: minimize the amount of code
 --
@@ -25,36 +25,75 @@
 --
 -- * #xa_1... : pattern matching
 module Front where
+import Control.Exception
 import Control.Monad
 import Data.Char
+import Data.Either
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Language.Haskell.Parser
-import Language.Haskell.Pretty
 import Language.Haskell.Syntax
+import System.Directory
+import System.FilePath.Posix
 
 import Error
 import Core
 
 
+-- | Necessary information for translating module name to 'FilePath'.
+data ModuleEnv=ModuleEnv [FilePath]
 
 -- | Search all necesarry modules and parse them all (if possible).
 -- If an parser error occurs, parse as many other files as possible to report further errors.
-collectModules :: FilePath -> IO (Maybe [(FilePath,HsModule)])
-collectModules path=do
-    xs<-readFile path
-    let px=parseModuleWithMode (ParseMode path) xs
-    
-    case px of
-        ParseFailed loc msg -> putStrLn ("@"++show loc) >> putStrLn msg >> return Nothing
-        ParseOk c->
---            print c >> putStrLn "\n==========\n" >>
-            putStrLn (prettyPrint (mds $ wds c)) >> putStrLn "\n==========\n" >>
-            putStrLn (pprintCoreP (sds $ mds $ wds c)) >> putStrLn "\n==========\n" >>
---            print (mds $ wds c) >>
-            return (Just [(path,c)])
+collectModules :: ModuleEnv -> String -> IO (Either [CompileError] [HsModule])
+collectModules env mod=do
+    x<-aux env (S.singleton mod) M.empty
+    let (ls,rs)=partitionEithers $ M.elems x
+    if null ls
+        then return $ Right rs
+        else return $ Left $ concat ls
+
+
+aux :: ModuleEnv
+    -> S.Set String -- ^ modules to be parsed
+    -> M.Map String (Either [CompileError] HsModule) -- ^ already parsed module
+    -> IO (M.Map String (Either [CompileError] HsModule)) -- ^ all modules
+aux env s m=case S.minView s of
+    Nothing -> return m
+    Just (s0,s') -> do x<-parseModule1 env s0
+                       aux env (S.union s' $ S.fromList $ either (const []) collectDep x) (M.insert s0 x m)
+
+
+
+parseModule1 :: ModuleEnv -> String -> IO (Either [CompileError] HsModule)
+parseModule1 env mod=do
+    x<-modToPath env mod
+    case x of
+        Nothing -> return $ Left [CompileError "frontend" "" ("module "++mod++" not found\n")]
+        Just ph -> do x<-readFile ph
+                      case parseModuleWithMode (ParseMode ph) x of
+                          ParseFailed loc msg -> return $ Left [CompileError "frontend" (show loc) msg]
+                          ParseOk x           -> return $ Right x
+
+
+collectDep :: HsModule -> [String]
+collectDep (HsModule _ _ _ is _)=map (uM . importModule) is
+    where uM (Module x)=x
+
+-- | convert module name to full file path.
+modToPath :: ModuleEnv -> String -> IO (Maybe FilePath)
+modToPath (ModuleEnv dirs) name=
+    handle (\(SomeException _)->return Nothing) $ liftM Just $ firstM doesFileExist $ map (</>(name++".hs")) dirs
+
+-- | Returns first element which satisfies the predicate.
+firstM :: Monad m => (a -> m Bool) -> [a] -> m a
+firstM f []=fail "firstM: not found"
+firstM f (x:xs)=do
+    e<-f x
+    if e then return x else firstM f xs
+
 
 
 
