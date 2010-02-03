@@ -5,6 +5,7 @@ import Data.Char
 import Data.Maybe
 import qualified Data.Map as M
 
+import Error
 import Brainfuck
 
 data GMCode

@@ -22,6 +22,7 @@ import qualified Data.Map as M
 import Data.Sequence((><))
 import qualified Data.Sequence as S
 
+import Error
 import GMachine
 
 

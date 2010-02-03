@@ -35,6 +35,7 @@ import Language.Haskell.Parser
 import Language.Haskell.Pretty
 import Language.Haskell.Syntax
 
+import Error
 import Core
 
 

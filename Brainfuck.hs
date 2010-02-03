@@ -11,6 +11,9 @@ import Data.Array.IO
 import Data.Char
 import Data.Word
 
+import Error
+
+
 data BF0
     =BF0PInc
     |BF0PDec
