@@ -4,6 +4,18 @@ module Util where
 import Control.Monad.Error
 import Control.Monad.Identity
 
+
+
+-- | Process that may fail with ['CompileError']
+-- ErrorT Identity is used for future use. (cf. ErrorT Writer)
+type Process a=ErrorT [CompileError] Identity a
+
+runProcess :: Process a -> Either [CompileError] a
+runProcess=runIdentity . runErrorT
+
+
+
+
 -- | a compile error
 -- 
 -- * corresponding part of program (ex.: frontend, core)
@@ -15,31 +27,6 @@ data CompileError=CompileError String String String
 
 instance Show CompileError where
     show (CompileError m p d)=m++":"++p++"\n"++d
-
-
-runProcessIO :: ProcessIO () -> IO ()
-runProcessIO f=runErrorT f >>=
-    either (putStr . unlines . map show) return
-
-runProcess :: Process a -> Either [CompileError] a
-runProcess=runIdentity . runErrorT
-
-
-unwrapIO :: ProcessIO a -> IO (Process a)
-unwrapIO=liftM (ErrorT . Identity) . runErrorT
-
-
-
-
-type ProcessIO a=ErrorT [CompileError] IO a
-type Process a=ErrorT [CompileError] Identity a
-
-wrapP :: IO a -> ProcessIO a
-wrapP=ErrorT . liftM Right
-
-wrapIO :: Process a -> ProcessIO a
-wrapIO =ErrorT . return . runIdentity . runErrorT
-
 
 instance Error [CompileError] where
     noMsg=[]

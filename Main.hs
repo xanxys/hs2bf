@@ -77,7 +77,18 @@ parseOption (term:xs)=case term of
 
 execCommand :: Command -> IO ()
 execCommand (ShowMessage x)=putStr x
-execCommand (Interpret opt from)=undefined
+
+execCommand (Interpret opt from)=do
+    let (mod,env)=analyzeName from
+    xs<-Front.collectModules env mod
+    case tolang opt of
+        LangCore -> error "Interpretation of Core is not supported"
+        LangGMachine -> evalWith GMachine.interpretGM $ runProcess $ xs >>= Front.compile >>= Core.compile
+        LangBF0 -> evalWith Brainfuck.interpretBF0 $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
+    where
+        evalWith :: (a->IO ()) -> Either [CompileError] a -> IO ()
+        evalWith f=either (putStr . unlines . map show) f
+
 execCommand (Compile opt from)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
