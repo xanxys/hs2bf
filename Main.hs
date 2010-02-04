@@ -66,6 +66,7 @@ parseOption []=Option{optimize=False,bfAddrSpace=2,verbose=True,debug=False,tola
 parseOption (term:xs)=case term of
     "-O" -> o{optimize=True}
     "-Sc" -> o{tolang=LangCore}
+    "-Sg" -> o{tolang=LangGMachine}
     "-Sb0" -> o{tolang=LangBF0}
     _ -> error $ "unknown option:"++term
     where o=parseOption xs
@@ -80,10 +81,13 @@ execCommand (Interpret opt from)=undefined
 execCommand (Compile opt from)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
-    let ys=runProcess $ xs >>= Front.compile >>= Core.compile
-    print ys
-        
-
+    case tolang opt of
+        LangCore -> outputWith Core.pprintCoreP $ runProcess $ xs >>= Front.compile
+        LangGMachine -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile
+        LangBF0 ->  outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
+    where
+        outputWith :: (a->String) -> Either [CompileError] a -> IO ()
+        outputWith f=putStr . either (unlines . map show) f
 
 
 version :: String

@@ -1,4 +1,18 @@
 #!/bin/env fish
 
-ghc --make Main -O -o hs2bf; and ./hs2bf --make test/Echo.hs
+set PROG ./hs2bf
+set FILE test/Echo.hs
+
+function compile
+    echo "== $argv[1] =="
+    eval $PROG --make $FILE $argv[2]
+    echo -e "\n\n"
+end
+    
+
+ghc --make Main -O -o $PROG;
+and compile Core -Sc;
+and compile GMachine -Sg;
+and compile BF0 -Sb0
+
 
