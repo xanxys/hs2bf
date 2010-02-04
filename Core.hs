@@ -16,7 +16,7 @@
 --
 -- are done in Core language
 module Core where
-import Data.Foldable
+import qualified Data.Foldable as F
 import Data.List
 import qualified Data.Map as M
 import Data.Sequence((><))
@@ -36,8 +36,26 @@ data CrProc a=CrProc (CrAName a) [(CrAName a)] (CrAExpr a)
 
 
 
+
+
 compile :: Core a b -> Process (M.Map String [GMCode])
-compile (Core ds ps)=return $ M.fromList $ map compileP ps
+compile (Core ds ps)=return $ M.fromList $ map compileP $ ps++concatMap convertData ds
+
+
+convertData :: CrData a -> [CrProc b]
+convertData (CrData _ _ cs)=map convertDataCon cs
+
+convertDataCon :: (CrName,[CrAnnot a CrType]) -> CrProc b
+convertDataCon (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr n $ map (wrap . CrVar) args
+    where
+        wrap=CrA undefined
+        args=take n $ stringSeq "#d"
+        n=length xs
+
+
+
+
+
 
 -- | Compile one super combinator to 'GMCode'
 -- requirement:
@@ -46,7 +64,7 @@ compile (Core ds ps)=return $ M.fromList $ map compileP ps
 --
 compileP :: CrProc a -> (String,[GMCode])
 compileP (CrProc name args expr)=
-    (unA name,adjustStack $ toList $ compileE m (unA expr)><S.singleton (Slide n))
+    (unA name,adjustStack $ F.toList $ compileE m (unA expr)><S.singleton (Slide n))
     where
         n=length args
         m=M.fromList $ zip (map unA args) [1..]
@@ -95,7 +113,15 @@ data StrBlock
     |SDedent
 
 pprintData :: (a -> String -> String) -> CrData a -> StrBlock
-pprintData f _=SPrim "SARX SARK / ELDA TALUTA / ARK ARX"
+pprintData f (CrData name xs cons)=SBlock $
+    [SBlock [SPrim "data",SSpace,SPrim name]
+    ,SIndent
+    ,SNewline
+    ,SBlock $ zipWith f cons ("=":repeat "|")
+    ,SDedent
+    ,SNewline
+    ]
+    where f (name,xs) eq=SBlock [SPrim eq,SPrim name,SSpace,SPrim "???",SNewline]
 
 pprintProc f (CrProc n as e)=SBlock $
     (intersperse SSpace $ map (pprintAName f) $ n:as)++
@@ -175,56 +201,4 @@ unA (CrA _ s)=s
 type CrName=String
 
 
-
-
-
-
-{-
-123 :: Integer :: CrTyCon "Integer" :: *
-(x+) :: Integer->Integer :: CrTyApp (CrTyApp (CrTyCon "#A") (CrTyCon "Integer")) (CrTyCon "Integer") :: *
-#L :: * -> * :: CrKindApp CrKindAny CrKindAny
-
-data List a=Cons a (List a)|Null
-
-
-List :: * -> *
-
-CrTyExp 
--}
-
--- | Core language - desugared Haskell
--- * a lot of useful transformations are done in this language
-
-{-
-data CoreP=CoreP [CrData] [CrPat] [CrDecl String]
-data CoreM v=CoreM (CrExpr v)
-data CoreS v=CoreS [CrDecl v] deriving(Show)
-
-data CrData=CrData CrName [(CrName,CrType)]
-data CrPat=CrPat 
-
-type CrType=()
-
-
-
-data CrDecl v=CrDecl CrName [v] (CrExpr v) deriving(Show)
-
-
-data CrExpr v
-    =CrLm   [v] (CrExpr v)
-    |CrApp  (CrExpr v) (CrExpr v)
-    
-    |CrVar  CrName
-    |CrLet  Bool [(CrName,CrExpr v)] (CrExpr v)
-    -- data
-    |CrCstr Int [CrExpr v]
-    |CrCase (CrExpr v) [(Int,[v],CrExpr v)]
-    -- literal
-    |CrNum  Int
---     |CrAnnot
-    deriving(Show)
-
-
-type CrName=String
--}
 

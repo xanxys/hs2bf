@@ -105,10 +105,11 @@ firstM f (x:xs)=do
 -- Replaces all implicit pattern matching with explicit cases.
 -- Explicit modification of SrcLoc for error reporting in later process.
 sds :: HsModule -> CoreP
-sds (HsModule _ _ _ _ decls)=Core [] (map convDecl $ filter isFunBind decls)
+sds (HsModule _ _ _ _ decls)=Core (map convDataDecl ds) (map convFunDecl fs)
     where
         ds=filter isDataDecl decls
         fs=filter isFunBind decls
+
 
 
 
@@ -124,9 +125,15 @@ isPatBind (HsPatBind _ _ _ _)=True
 isPatBind _=False
 
 
+convDataDecl :: HsDecl -> CrData (LocHint,Maybe CrKind)
+convDataDecl (HsDataDecl loc ctx (HsIdent name) vars cons derv)=
+    CrData name [] $ map convDataCon cons
 
-convDecl :: HsDecl -> CrProc (LocHint,Maybe CrType)
-convDecl (HsFunBind [HsMatch loc (HsIdent n) args (HsUnGuardedRhs e) []])
+convDataCon :: HsConDecl -> (CrName,[CrAnnot (LocHint,Maybe CrKind) CrType])
+convDataCon (HsConDecl loc (HsIdent name) ts)=(name,replicate (length ts) (CrA (show loc,Nothing) undefined))
+
+convFunDecl :: HsDecl -> CrProc (LocHint,Maybe CrType)
+convFunDecl (HsFunBind [HsMatch loc (HsIdent n) args (HsUnGuardedRhs e) []])
     =CrProc (CrA (h,Nothing) n) (map f args) (convExp h e)
     where
         f (HsPVar (HsIdent x))=CrA (h,Nothing) x
