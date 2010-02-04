@@ -1,3 +1,7 @@
+-- | GMachine
+-- reference: Implementing Functional Languages: a tutorial
+--
+-- GC is executed every 256 allocation.
 module GMachine where
 import Control.Monad
 import Control.Monad.State
@@ -9,10 +13,10 @@ import Util
 import Brainfuck
 
 data GMCode
-    =Slide Int
+    =Slide Int -- ^ pop 1st...nth items
     |Alloc Int
-    |Update Int
-    |Pop Int
+    |Update Int -- ^ [n]:=Ind &[0] and pop 1
+    |Pop Int -- ^ remove n items
     |MkApp
     |Eval
     |Push Int
@@ -27,6 +31,8 @@ data GMCode
 data GFCompileFlag=GFCompileFlag
     {addrSpace :: Int -- ^ bytes
     }
+
+
 
 
 
@@ -65,11 +71,11 @@ compile m=return $ BF0 []
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()
-interpretGM fs=evalStateT (exec "main") emptySt
-    where exec name=aux (fs M.! name) >>= maybe (return ()) exec
+interpretGM fs=evalStateT (exec []) (makeEmptySt "main")
+    where exec code=aux code >>= maybe (return ()) (exec . (fs M.!))
 
-emptySt :: GMInternal
-emptySt=GMInternal [] M.empty
+makeEmptySt :: String -> GMInternal
+makeEmptySt entry=execState (alloc (Combinator entry) >>= push) $ GMInternal [] M.empty
 
 
 -- | Interpret a single combinator and returns new combinator to be executed.
@@ -79,7 +85,7 @@ aux []=do
     node<-trans $ refStack 0 >>= refHeap
     case node of
         App a0 a1 -> trans (push a0) >> aux []
-        Combinator x -> trans pop >> return (Just x)
+        Combinator x -> return (Just x)
         Struct 0 [f] -> trans pop >> liftIO (liftM ord getChar) >>= \x->aux [MkByte x]
         Struct 1 [x,k] -> trans pop >> trans (refHeap x) >>= liftIO . putChar . f >> trans (push k) >> aux []
         Struct 2 [] -> trans pop >> return Nothing
@@ -134,5 +140,16 @@ evalGM MkApp=do
     [s0,s1]<-popn 2 
     n<-alloc (App s0 s1)
     push n
+evalGM (Pack t n)=do
+    ss<-popn n
+    alloc (Struct t ss) >>= push
+evalGM (PushSC n)=do
+    alloc (Combinator n) >>= push
+evalGM (Slide n)=do
+    x<-pop
+    popn n
+    push x
+
+
 
 

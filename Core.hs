@@ -43,10 +43,10 @@ compile (Core ds ps)=return $ M.fromList $ map compileP $ ps++concatMap convertD
 
 
 convertData :: CrData a -> [CrProc b]
-convertData (CrData _ _ cs)=map convertDataCon cs
+convertData (CrData _ _ cs)=zipWith convertDataCon [0..] cs
 
-convertDataCon :: (CrName,[CrAnnot a CrType]) -> CrProc b
-convertDataCon (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr n $ map (wrap . CrVar) args
+convertDataCon :: Int -> (CrName,[CrAnnot a CrType]) -> CrProc b
+convertDataCon t (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t $ map (wrap . CrVar) args
     where
         wrap=CrA undefined
         args=take n $ stringSeq "#d"
@@ -64,7 +64,7 @@ convertDataCon (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr n $ 
 --
 compileP :: CrProc a -> (String,[GMCode])
 compileP (CrProc name args expr)=
-    (unA name,adjustStack $ F.toList $ compileE m (unA expr)|>Slide n)
+    (unA name,adjustStack $ F.toList $ compileE m (unA expr)><S.fromList [Slide $ n+1])
     where
         n=length args
         m=M.fromList $ zip (map unA args) [1..]
@@ -73,7 +73,7 @@ compileE :: M.Map String Int -> CrExpr a -> S.Seq GMCode
 compileE m (CrApp e0 e1)=(compileE m (unA e0) >< compileE m (unA e1)) |> MkApp
 compileE m (CrVar v)=S.singleton $ maybe (PushSC v) Push $ M.lookup v m
 compileE m (CrByte x)=S.singleton $ PushByte x
-compileE m (CrCstr n es)=concatS (map (compileE m . unA) es) |> Alloc n
+compileE m (CrCstr t es)=concatS (map (compileE m . unA) es) |> Pack t (length es)
 
 concatS :: [S.Seq a] -> S.Seq a
 concatS=foldr (><) S.empty
@@ -89,6 +89,7 @@ adjustStack=aux 0
         aux d (PushByte x:cs)=PushByte x:aux (d+1) cs
         aux d (Slide n:cs)=Slide n:aux (d-n) cs
         aux d (Alloc n:cs)=Alloc n:aux (d-n+1) cs
+        aux d (Pack t n:cs)=Pack t n:aux (d-n+1) cs
 
 
 
@@ -110,7 +111,7 @@ pprintData f (CrData name xs cons)=SBlock $
     ,SDedent
     ,SNewline
     ]
-    where f (name,xs) eq=SBlock [SPrim eq,SPrim name,SSpace,SPrim "???",SNewline]
+    where f (name,xs) eq=SBlock [SPrim eq,SPrim name,SSpace,SPrim $ show $ length xs,SNewline]
 
 pprintProc f (CrProc n as e)=SBlock $
     (intersperse SSpace $ map (pprintAName f) $ n:as)++

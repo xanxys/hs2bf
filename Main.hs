@@ -84,7 +84,7 @@ execCommand (Compile opt from)=do
     case tolang opt of
         LangCore -> outputWith Core.pprintCoreP $ runProcess $ xs >>= Front.compile
         LangGMachine -> outputWith GMachine.pprintGM $ runProcess $ xs >>= Front.compile >>= Core.compile
-        LangBF0 ->  outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
+        LangBF0 -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
     where
         outputWith :: (a->String) -> Either [CompileError] a -> IO ()
         outputWith f=putStr . either (unlines . map show) f

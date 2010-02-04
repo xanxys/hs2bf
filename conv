@@ -1,7 +1,7 @@
 #!/bin/env fish
 
 set PROG ./hs2bf
-set FILE test/Echo.hs
+set FILE test/Halt.hs
 
 function compile
     echo "== $argv[1] =="
