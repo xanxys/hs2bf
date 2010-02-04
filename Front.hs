@@ -39,7 +39,7 @@ import Language.Haskell.Syntax
 import System.Directory
 import System.FilePath.Posix
 
-import Error
+import Util
 import Core
 
 
@@ -486,24 +486,5 @@ opToExp (HsQConOp n)=HsCon n
 multiApp :: HsExp -> [HsExp] -> HsExp
 multiApp=foldl HsApp
 
--- | a b c ... z aa ab ac ... az ba ...
--- avoid CAF.
-stringSeq :: String -> [String]
-stringSeq prefix=tail $ map ((prefix++) . reverse) $ iterate stringInc []
 
-stringInc :: String -> String
-stringInc []="a"
-stringInc ('z':xs)='a':stringInc xs
-stringInc (x:xs)=succ x:xs
-
--- | usage
---
--- > change1 "XYZ" "abc"
---
--- evaluates to
---
--- > ["Xbc","aYc","abZ"]
-change1 :: [a] -> [a] -> [[a]]
-change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
-change1 _ _=[]
 

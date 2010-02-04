@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
-module Error where
+-- | Modular error reporting and common functions
+module Util where
 import Control.Monad.Error
 import Control.Monad.Identity
 
@@ -54,4 +55,25 @@ instance Error [CompileError] where
 --    If you can write [m b] -> m [b] , then use Monad(Plus).
 --   Otherwise use Arrow.
 
+
+-- | a b c ... z aa ab ac ... az ba ...
+-- avoid CAF.
+stringSeq :: String -> [String]
+stringSeq prefix=tail $ map ((prefix++) . reverse) $ iterate stringInc []
+
+stringInc :: String -> String
+stringInc []="a"
+stringInc ('z':xs)='a':stringInc xs
+stringInc (x:xs)=succ x:xs
+
+-- | usage
+--
+-- > change1 "XYZ" "abc"
+--
+-- evaluates to
+--
+-- > ["Xbc","aYc","abZ"]
+change1 :: [a] -> [a] -> [[a]]
+change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
+change1 _ _=[]
 

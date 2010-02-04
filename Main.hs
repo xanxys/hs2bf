@@ -18,7 +18,7 @@ import Language.Haskell.Pretty
 import System.Environment
 import System.FilePath.Posix
 
-import Error
+import Util
 import qualified Front
 import qualified Core
 import qualified GMachine

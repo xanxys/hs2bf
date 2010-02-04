@@ -5,7 +5,7 @@ import Data.Char
 import Data.Maybe
 import qualified Data.Map as M
 
-import Error
+import Util
 import Brainfuck
 
 data GMCode
@@ -124,7 +124,5 @@ evalGM MkApp=do
     [s0,s1]<-popn 2 
     n<-alloc (App s0 s1)
     push n
-
-
 
 
