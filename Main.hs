@@ -83,7 +83,7 @@ execCommand (Compile opt from)=do
     xs<-Front.collectModules env mod
     case tolang opt of
         LangCore -> outputWith Core.pprintCoreP $ runProcess $ xs >>= Front.compile
-        LangGMachine -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile
+        LangGMachine -> outputWith GMachine.pprintGM $ runProcess $ xs >>= Front.compile >>= Core.compile
         LangBF0 ->  outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
     where
         outputWith :: (a->String) -> Either [CompileError] a -> IO ()
@@ -122,7 +122,7 @@ help=unlines $
 
 
 analyzeName :: String -> (String,Front.ModuleEnv)
-analyzeName n=(takeBaseName n,Front.ModuleEnv [dirPrefix++takeDirectory n])
+analyzeName n=(takeBaseName n,Front.ModuleEnv [dirPrefix++takeDirectory n,"./test"])
     where dirPrefix=if isAbsolute n then "" else "./"
 
 

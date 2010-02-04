@@ -30,6 +30,16 @@ data GFCompileFlag=GFCompileFlag
 
 
 
+pprintGM :: M.Map String [GMCode] -> String
+pprintGM=compileSB 0 . map (uncurry pprintGMF) . M.assocs
+
+pprintGMF :: String -> [GMCode] -> StrBlock
+pprintGMF name cs=SBlock
+    [SPrim name,SPrim ":",SIndent,SNewline
+    ,SBlock $ map (\x->SBlock [SPrim $ show x,SNewline]) cs
+    ,SDedent,SNewline]
+
+
 
 -- | G-machine state for use in 'interpretGM'
 type GMS=State GMInternal

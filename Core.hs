@@ -19,7 +19,7 @@ module Core where
 import qualified Data.Foldable as F
 import Data.List
 import qualified Data.Map as M
-import Data.Sequence((><))
+import Data.Sequence((><),(|>),(<|))
 import qualified Data.Sequence as S
 
 import Util
@@ -64,15 +64,19 @@ convertDataCon (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr n $ 
 --
 compileP :: CrProc a -> (String,[GMCode])
 compileP (CrProc name args expr)=
-    (unA name,adjustStack $ F.toList $ compileE m (unA expr)><S.singleton (Slide n))
+    (unA name,adjustStack $ F.toList $ compileE m (unA expr)|>Slide n)
     where
         n=length args
         m=M.fromList $ zip (map unA args) [1..]
 
 compileE :: M.Map String Int -> CrExpr a -> S.Seq GMCode 
-compileE m (CrApp e0 e1)=compileE m (unA e0)><compileE m (unA e1)><S.singleton MkApp
+compileE m (CrApp e0 e1)=(compileE m (unA e0) >< compileE m (unA e1)) |> MkApp
 compileE m (CrVar v)=S.singleton $ maybe (PushSC v) Push $ M.lookup v m
 compileE m (CrByte x)=S.singleton $ PushByte x
+compileE m (CrCstr n es)=concatS (map (compileE m . unA) es) |> Alloc n
+
+concatS :: [S.Seq a] -> S.Seq a
+concatS=foldr (><) S.empty
 
 
 adjustStack :: [GMCode] -> [GMCode]
@@ -84,6 +88,7 @@ adjustStack=aux 0
         aux d (PushSC k:cs)=PushSC k:aux (d+1) cs
         aux d (PushByte x:cs)=PushByte x:aux (d+1) cs
         aux d (Slide n:cs)=Slide n:aux (d-n) cs
+        aux d (Alloc n:cs)=Alloc n:aux (d-n+1) cs
 
 
 
@@ -95,22 +100,6 @@ pprintCoreP :: CoreP -> String
 pprintCoreP (Core ds ps)=compileSB 0 $
     map (pprintData (\_ x->x)) ds++map (pprintProc (\_ x->x)) ps
 
-compileSB :: Int -> [StrBlock] -> String
-compileSB _ []=""
-compileSB n ((SBlock ss):xs)=compileSB n $ ss++xs
-compileSB n ((SPrim s):xs)=s++compileSB n xs
-compileSB n (SSpace:xs)=" "++compileSB n xs
-compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
-compileSB n (SIndent:xs)=compileSB (n+1) xs
-compileSB n (SDedent:xs)=compileSB (n-1) xs
-
-data StrBlock
-    =SBlock [StrBlock]
-    |SPrim String
-    |SSpace
-    |SNewline
-    |SIndent
-    |SDedent
 
 pprintData :: (a -> String -> String) -> CrData a -> StrBlock
 pprintData f (CrData name xs cons)=SBlock $
@@ -160,8 +149,8 @@ checkKind (CrData name vars cons)=Nothing
 
 -- | kind
 data CrKind
-    =CrKiApp CrKind CrKind
-    |CrKiX
+    =CrKiApp CrKind CrKind -- ^ left associative application of types
+    |CrKiX -- ^ the kind of proper types, /*/
 
 instance Show CrKind where
     show (CrKiApp k0 k1)="("++show k0++") -> ("++show k1++")"

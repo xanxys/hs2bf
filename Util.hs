@@ -77,3 +77,25 @@ change1 :: [a] -> [a] -> [[a]]
 change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
 change1 _ _=[]
 
+
+-- | Nested string with indent for general pretty printing
+data StrBlock
+    =SBlock [StrBlock]
+    |SPrim String
+    |SSpace
+    |SNewline
+    |SIndent
+    |SDedent
+
+
+-- | Render ['StrBlock'] with an inital indentation
+compileSB :: Int -> [StrBlock] -> String
+compileSB _ []=""
+compileSB n ((SBlock ss):xs)=compileSB n $ ss++xs
+compileSB n ((SPrim s):xs)=s++compileSB n xs
+compileSB n (SSpace:xs)=" "++compileSB n xs
+compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
+compileSB n (SIndent:xs)=compileSB (n+1) xs
+compileSB n (SDedent:xs)=compileSB (n-1) xs
+
+
