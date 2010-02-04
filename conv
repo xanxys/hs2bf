@@ -1,4 +1,4 @@
 #!/bin/env fish
 
-ghc --make Main -O -o hs2bf; and ./hs2bf
+ghc --make Main -O -o hs2bf; and ./hs2bf --make test/Echo.hs
 

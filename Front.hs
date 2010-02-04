@@ -27,6 +27,7 @@
 module Front where
 import Control.Exception
 import Control.Monad
+import Control.Monad.Error
 import Data.Char
 import Data.Either
 import Data.List
@@ -45,15 +46,18 @@ import Core
 -- | Necessary information for translating module name to 'FilePath'.
 data ModuleEnv=ModuleEnv [FilePath]
 
+compile :: [HsModule] -> Process CoreP
+compile ms=return $ sds $ mergeModules $ map (mds . wds) ms
+
 -- | Search all necesarry modules and parse them all (if possible).
 -- If an parser error occurs, parse as many other files as possible to report further errors.
-collectModules :: ModuleEnv -> String -> IO (Either [CompileError] [HsModule])
+collectModules :: ModuleEnv -> String -> IO (Process [HsModule])
 collectModules env mod=do
     x<-aux env (S.singleton mod) M.empty
     let (ls,rs)=partitionEithers $ M.elems x
     if null ls
-        then return $ Right rs
-        else return $ Left $ concat ls
+        then return $ return $ rs
+        else return $ throwError $ concat ls
 
 
 aux :: ModuleEnv

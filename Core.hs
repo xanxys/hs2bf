@@ -36,8 +36,8 @@ data CrProc a=CrProc (CrAName a) [(CrAName a)] (CrAExpr a)
 
 
 
-compile :: Core a b -> M.Map String [GMCode]
-compile (Core ds ps)=M.fromList $ map compileP ps
+compile :: Core a b -> Process (M.Map String [GMCode])
+compile (Core ds ps)=return $ M.fromList $ map compileP ps
 
 -- | Compile one super combinator to 'GMCode'
 -- requirement:
@@ -63,6 +63,9 @@ adjustStack=aux 0
         aux d []=[]
         aux d (Push n:cs)=Push (d+n):aux (d+1) cs
         aux d (MkApp:cs)=MkApp:aux (d-1) cs
+        aux d (PushSC k:cs)=PushSC k:aux (d+1) cs
+        aux d (PushByte x:cs)=PushByte x:aux (d+1) cs
+        aux d (Slide n:cs)=Slide n:aux (d-n) cs
 
 
 

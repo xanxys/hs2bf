@@ -22,7 +22,7 @@ data GMCode
     |Casejump [(Int,GMCode)]
     |Split Int
     |MkByte Int
-
+    deriving(Show)
 
 data GFCompileFlag=GFCompileFlag
     {addrSpace :: Int -- ^ bytes
@@ -50,6 +50,8 @@ type Heap=M.Map Address GMNode
 newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
+compile :: M.Map String [GMCode] -> Process [BF0]
+compile=undefined
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()

@@ -24,7 +24,18 @@ data BF0
     |BF0Input
     |BF0Output
     |BF0Loop [BF0] -- ^ a little bit high-level construct
-    deriving(Show)
+
+instance Show BF0 where
+    show BF0PInc=">"
+    show BF0PDec="<"
+    show BF0VInc="+"
+    show BF0VDec="-"
+    show BF0Begin="["
+    show BF0End="]"
+    show BF0Input=","
+    show BF0Output="."
+    show (BF0Loop ss)="["++concatMap show ss++"]"
+
 
 -- | Assume /standard/ environment. That is
 --
