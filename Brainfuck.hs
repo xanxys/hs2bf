@@ -14,7 +14,24 @@ import Data.Word
 import Util
 
 
-data BF0
+--
+
+-- | Brainfuck with constatnt.
+data BF1=BF1 [BF1Inst] deriving(Show)
+
+data BF1Inst
+    =BF1PR Int
+    |BF1VR Int
+    |BF1VC
+    |BF1Input
+    |BF1Output
+    |BF1Loop [BF1Inst]
+    deriving(Show)
+
+-- | Original brainfuck.
+data BF0=BF0 [BF0Inst]
+
+data BF0Inst
     =BF0PInc
     |BF0PDec
     |BF0VInc
@@ -23,9 +40,12 @@ data BF0
     |BF0End
     |BF0Input
     |BF0Output
-    |BF0Loop [BF0] -- ^ a little bit high-level construct
+    |BF0Loop [BF0Inst] -- ^ a little bit high-level construct
 
 instance Show BF0 where
+    show (BF0 is)=concatMap show is
+
+instance Show BF0Inst where
     show BF0PInc=">"
     show BF0PDec="<"
     show BF0VInc="+"
@@ -44,10 +64,10 @@ instance Show BF0 where
 -- * Each cell consists of a byte which represents Z256.
 --
 -- * Moving into negative address immediately causes an error.
-interpretBF0 :: [BF0] -> IO ()
-interpretBF0 is=newArray (0,1000) 0 >>= evalBF0 (detectLoop is) 0
+interpretBF0 :: BF0 -> IO ()
+interpretBF0 (BF0 is)=newArray (0,1000) 0 >>= evalBF0 (detectLoop is) 0
 
-evalBF0 :: [BF0] -> Int -> IOUArray Int Word8 -> IO ()
+evalBF0 :: [BF0Inst] -> Int -> IOUArray Int Word8 -> IO ()
 evalBF0 [] ptr arr=return ()
 evalBF0 (BF0PInc:is) ptr arr=do
     pmax<-liftM snd $ getBounds arr

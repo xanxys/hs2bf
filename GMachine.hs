@@ -60,8 +60,8 @@ type Heap=M.Map Address GMNode
 newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
-compile :: M.Map String [GMCode] -> Process [BF0]
-compile=undefined
+compile :: M.Map String [GMCode] -> Process BF0
+compile m=return $ BF0 []
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()
