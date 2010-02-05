@@ -10,7 +10,7 @@ import Data.Maybe
 import qualified Data.Map as M
 
 import Util
-import Brainfuck
+import SAM
 
 data GMCode
     =Slide Int -- ^ pop 1st...nth items
@@ -66,8 +66,8 @@ type Heap=M.Map Address GMNode
 newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
-compile :: M.Map String [GMCode] -> Process BFG
-compile m=return $ BFG
+compile :: M.Map String [GMCode] -> Process SAM
+compile m=return $ SAM undefined
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()

@@ -1,0 +1,136 @@
+S0 S1 H0
+   
+
+stack0@S0:
+    while $
+        while $
+            ptr -1
+        bank S0 S1
+        while $
+            ptr -1
+        bank S1 S0
+
+pr stackNew@S0
+    inline stack0
+    ptr 2
+    while $
+        ptr 2
+
+pr stackTop@S0
+    inline stackNew
+    ptr -2
+
+pr heapNew@H0/addr:2
+    alloc 2 temp
+    alloc 2 next
+    move 2 $ temp
+    move 2 temp $ next
+    bank H0 next
+    while $
+        val -1
+        bank next H0
+        ptr 1
+        bank H0 next
+    ptr 1
+    move 2 temp $ next
+    ptr -1
+    move 2 next temp
+
+
+pr PushSC0@S0
+    inline stack0
+    bank S0 H0
+    alloc 2 temp
+    inline heapNew temp
+    val 1
+    ptr 1
+    val 3
+    etcetc
+    bank H0 S0
+    stackNew
+    move 2 temp $
+    delete temp
+
+
+pr Pack2_0@S0
+    inline stack0
+    bank S0 H0
+    alloc 2 temp
+    inline heapNew temp
+    val 1
+    ptr 2
+    xyz
+    bank H0 S0
+    stackNew
+    move 2 temp $
+    delete temp
+
+pr Pack1_2@S0:
+    inline stack0
+    bank S0 H0
+    alloc 2 temp
+    inline heapNew temp
+    val 1
+    ptr 2
+    xyz
+    bank H0 S0
+    stackNew
+    move 2 temp $
+    delete temp
+
+
+pr Slide1@S0:
+    inline stackTop
+    move 1 $ $-1
+    bank S0 S1
+    move 1 $ $-1
+    bank S1 S0
+
+
+pr ^@S0
+    alloc 1 flag
+    pushSC1
+    clr flag
+    val flag 2
+    while flag
+        inline eval flag
+        inline exec flag
+    delete flag
+    
+pr eval@S0
+    while flag
+        alloc 2 addr
+        inline StackTop
+        move $ addr
+        bank S0 H0
+        inline heapRef addr
+        alloc 1 temp
+        move $ temp
+        move temp $ flag
+        delete temp
+        delete addr
+        dispatch flag
+            3
+                move $ flag
+                dispatch flag
+                    2
+                        halt
+                clr $
+            4
+                move $ flag
+
+            
+
+pr exec@S0
+    inode 0
+        inline Pack2_0
+        inline Slide1
+    inode 1
+        inline PushSC0
+        inline Slide1
+    
+    dispatch flag
+    
+    
+
+

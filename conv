@@ -13,9 +13,9 @@ end
 ghc --make Main -O -o $PROG;
 and compile Core -Sc;
 and compile GMachine -Sg;
-and compile BFG -Sbg;
-and compile BFM -Sbm;
-and compile BFC -Sbc;
+and compile SAM -Ss;
+and compile BFM -Sm;
+and compile BFC -Sk;
 and compile BF -Sb
 
 

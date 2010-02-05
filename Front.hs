@@ -185,38 +185,37 @@ convFullCase h (HsCase e as)=CrA (h,Nothing) $ CrCase (convExp h e) (map f $ M.a
 
 -- | Transform case of multiple vars. Note that constructors are already removed by 'procFullCase'.
 -- example:
---  @
---  case v1 v2 v3 of
---      p11 p12 p13 -> e1
---      p21 p22 p23 -> e2
---      _           -> fail
---  @
--- to
---  @
---  case v1 v2 v3 of
---      p11 p12 p13 -> e1
---      _ -> case v1 v2 v3 of
---               p21 p22 p23 -> e2
---               _ -> fail
---  @
+--  
+--  > case v1 v2 v3 of
+--  >    p11 p12 p13 -> e1
+--  >    p21 p22 p23 -> e2
+--  >    _           -> fail
+--
+--  to
+--
+--  > case v1 v2 v3 of
+--  >    p11 p12 p13 -> e1
+--  >    _ -> case v1 v2 v3 of
+--  >             p21 p22 p23 -> e2
+--  >             _ -> fail
 convSeqCase :: CrAExprP -> [CrAExprP] -> [([HsPat],CrAExprP)] -> CrAExprP
 convSeqCase fail vs []=fail
 convSeqCase fail vs ((ps,e):as)=convAndCase (convSeqCase fail vs as) e (zip vs ps)
 
 -- | Transform multiple vars to
--- @
--- case v1 v2 v3 of
---     p1 u2 p3 -> succ
--- @
+-- 
+-- >case v1 v2 v3 of
+-- >    p1 u2 p3 -> succ
+-- 
 -- to
--- @
--- case v1 of
---     p1 -> let u2=v2 in
---           case v3 of
---               p3 -> succ
---               _  -> fail(other 'HsAlt')
---     _ -> fail(other 'HsAlt')
--- @
+-- 
+-- >case v1 of
+-- >    p1 -> let u2=v2 in
+-- >          case v3 of
+-- >              p3 -> succ
+-- >              _  -> fail(other 'HsAlt')
+-- >    _ -> fail(other 'HsAlt')
+--
 convAndCase :: CrAExprP -> CrAExprP -> [(CrAExprP,HsPat)] -> CrAExprP
 convAndCase fail succ []=succ
 convAndCase fail succ ((v,pat):cs)=CrA ("?",Nothing) $ case pat of

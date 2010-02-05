@@ -14,17 +14,20 @@ import Data.Word
 import Util
 
 
-compileG2M :: BFG -> Process BFM
-compileG2M=undefined
 
-compileM2C :: BFM -> Process BFC
-compileM2C=undefined
+compileM :: BFM -> Process BFC
+compileM=undefined
 
 compileC :: BFC -> Process BF
 compileC=undefined
 
--- | Suitable for implementing G-machine
-data BFG=BFG deriving(Show)
+
+
+
+
+
+
+
 
 
 -- | Brainfuck with 
