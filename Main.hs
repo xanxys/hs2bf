@@ -36,7 +36,10 @@ data Command
 data Language
     =LangCore
     |LangGMachine
-    |LangBF0
+    |LangBFG
+    |LangBFM
+    |LangBFC
+    |LangBF
     deriving(Show,Eq,Ord)
 
 -- | All /global options/
@@ -62,12 +65,15 @@ parseArgs _=ShowMessage "Invalid command. See 'hs2bf --help' for usage."
 
 
 parseOption :: [String] -> Option
-parseOption []=Option{optimize=False,bfAddrSpace=2,verbose=True,debug=False,tolang=LangBF0}
+parseOption []=Option{optimize=False,bfAddrSpace=2,verbose=True,debug=False,tolang=LangBF}
 parseOption (term:xs)=case term of
-    "-O" -> o{optimize=True}
-    "-Sc" -> o{tolang=LangCore}
-    "-Sg" -> o{tolang=LangGMachine}
-    "-Sb0" -> o{tolang=LangBF0}
+    "-O"   -> o{optimize=True}
+    "-Sc"  -> o{tolang=LangCore}
+    "-Sg"  -> o{tolang=LangGMachine}
+    "-Sbg" -> o{tolang=LangBFG}
+    "-Sbm" -> o{tolang=LangBFM}
+    "-Sbc" -> o{tolang=LangBFC}
+    "-Sb"  -> o{tolang=LangBF}
     _ -> error $ "unknown option:"++term
     where o=parseOption xs
 
@@ -84,7 +90,10 @@ execCommand (Interpret opt from)=do
     case tolang opt of
         LangCore -> error "Interpretation of Core is not supported"
         LangGMachine -> evalWith GMachine.interpretGM $ runProcess $ xs >>= Front.compile >>= Core.compile
-        LangBF0 -> evalWith Brainfuck.interpretBF0 $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
+        LangBFG -> error "Interpretation of BFG is not supported"
+        LangBFM -> error "Interpretation of BFM is not supported"
+        LangBFC -> error "Interpretation of BFC is not supported"
+        LangBF -> evalWith Brainfuck.interpretBF $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= Brainfuck.compileG2M >>= Brainfuck.compileM2C >>= Brainfuck.compileC
     where
         evalWith :: (a->IO ()) -> Either [CompileError] a -> IO ()
         evalWith f=either (putStr . unlines . map show) f
@@ -95,7 +104,10 @@ execCommand (Compile opt from)=do
     case tolang opt of
         LangCore -> outputWith Core.pprintCoreP $ runProcess $ xs >>= Front.compile
         LangGMachine -> outputWith GMachine.pprintGM $ runProcess $ xs >>= Front.compile >>= Core.compile
-        LangBF0 -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
+        LangBFG -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
+        LangBFM -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= Brainfuck.compileG2M
+        LangBFC -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= Brainfuck.compileG2M >>= Brainfuck.compileM2C
+        LangBF -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= Brainfuck.compileG2M >>= Brainfuck.compileM2C >>= Brainfuck.compileC
     where
         outputWith :: (a->String) -> Either [CompileError] a -> IO ()
         outputWith f=putStr . either (unlines . map show) f

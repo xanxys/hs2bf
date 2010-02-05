@@ -13,6 +13,10 @@ end
 ghc --make Main -O -o $PROG;
 and compile Core -Sc;
 and compile GMachine -Sg;
-and compile BF0 -Sb0
+and compile BFG -Sbg;
+and compile BFM -Sbm;
+and compile BFC -Sbc;
+and compile BF -Sb
+
 
 

@@ -1,4 +1,4 @@
--- | Brainfuck(BF2,BF1,BF0) optimizer
+-- | Brainfuck(BF2,BF1,BF) optimizer
 --
 -- Cost model of BF.
 --
@@ -14,47 +14,65 @@ import Data.Word
 import Util
 
 
---
+compileG2M :: BFG -> Process BFM
+compileG2M=undefined
+
+compileM2C :: BFM -> Process BFC
+compileM2C=undefined
+
+compileC :: BFC -> Process BF
+compileC=undefined
+
+-- | Suitable for implementing G-machine
+data BFG=BFG deriving(Show)
+
+
+-- | Brainfuck with 
+-- * multi-byte cell
+-- * register
+-- * independent memories
+data BFM=BFM deriving(Show)
+
 
 -- | Brainfuck with constatnt.
-data BF1=BF1 [BF1Inst] deriving(Show)
+data BFC=BFC [BFCInst] deriving(Show)
 
-data BF1Inst
-    =BF1PR Int
-    |BF1VR Int
-    |BF1VC
-    |BF1Input
-    |BF1Output
-    |BF1Loop [BF1Inst]
+data BFCInst
+    =BFCPR Int
+    |BFCVR Int
+    |BFCVC
+    |BFCInput
+    |BFCOutput
+    |BFCLoop [BFCInst]
     deriving(Show)
 
 -- | Original brainfuck.
-data BF0=BF0 [BF0Inst]
+data BF=BF [BFInst]
 
-data BF0Inst
-    =BF0PInc
-    |BF0PDec
-    |BF0VInc
-    |BF0VDec
-    |BF0Begin
-    |BF0End
-    |BF0Input
-    |BF0Output
-    |BF0Loop [BF0Inst] -- ^ a little bit high-level construct
+data BFInst
+    =BFPInc
+    |BFPDec
+    |BFVInc
+    |BFVDec
+    |BFBegin
+    |BFEnd
+    |BFInput
+    |BFOutput
+    |BFLoop [BFInst] -- ^ a little bit high-level construct
 
-instance Show BF0 where
-    show (BF0 is)=concatMap show is
+instance Show BF where
+    show (BF is)=concatMap show is
 
-instance Show BF0Inst where
-    show BF0PInc=">"
-    show BF0PDec="<"
-    show BF0VInc="+"
-    show BF0VDec="-"
-    show BF0Begin="["
-    show BF0End="]"
-    show BF0Input=","
-    show BF0Output="."
-    show (BF0Loop ss)="["++concatMap show ss++"]"
+instance Show BFInst where
+    show BFPInc=">"
+    show BFPDec="<"
+    show BFVInc="+"
+    show BFVDec="-"
+    show BFBegin="["
+    show BFEnd="]"
+    show BFInput=","
+    show BFOutput="."
+    show (BFLoop ss)="["++concatMap show ss++"]"
 
 
 -- | Assume /standard/ environment. That is
@@ -64,24 +82,24 @@ instance Show BF0Inst where
 -- * Each cell consists of a byte which represents Z256.
 --
 -- * Moving into negative address immediately causes an error.
-interpretBF0 :: BF0 -> IO ()
-interpretBF0 (BF0 is)=newArray (0,1000) 0 >>= evalBF0 (detectLoop is) 0
+interpretBF :: BF -> IO ()
+interpretBF (BF is)=newArray (0,1000) 0 >>= evalBF (detectLoop is) 0
 
-evalBF0 :: [BF0Inst] -> Int -> IOUArray Int Word8 -> IO ()
-evalBF0 [] ptr arr=return ()
-evalBF0 (BF0PInc:is) ptr arr=do
+evalBF :: [BFInst] -> Int -> IOUArray Int Word8 -> IO ()
+evalBF [] ptr arr=return ()
+evalBF (BFPInc:is) ptr arr=do
     pmax<-liftM snd $ getBounds arr
     if ptr>=pmax
-        then getElems arr >>= newListArray (0,pmax*2+1) . (++replicate (pmax+1) 0) >>= evalBF0 is (ptr+1)
-        else evalBF0 is (ptr+1) arr
-evalBF0 (BF0PDec:is) ptr arr=evalBF0 is (ptr-1) arr
-evalBF0 (BF0VInc:is) ptr arr=readArray arr ptr >>= writeArray arr ptr . (+1) >> evalBF0 is ptr arr
-evalBF0 (BF0VDec:is) ptr arr=readArray arr ptr >>= writeArray arr ptr . (+(-1)) >> evalBF0 is ptr arr
-evalBF0 (BF0Input:is) ptr arr=getChar >>= writeArray arr ptr . fromIntegral . ord >> evalBF0 is ptr arr
-evalBF0 (BF0Output:is) ptr arr=readArray arr ptr >>= putChar . chr . fromIntegral >> evalBF0 is ptr arr
-evalBF0 is0@(BF0Loop ss:is) ptr arr=do
+        then getElems arr >>= newListArray (0,pmax*2+1) . (++replicate (pmax+1) 0) >>= evalBF is (ptr+1)
+        else evalBF is (ptr+1) arr
+evalBF (BFPDec:is) ptr arr=evalBF is (ptr-1) arr
+evalBF (BFVInc:is) ptr arr=readArray arr ptr >>= writeArray arr ptr . (+1) >> evalBF is ptr arr
+evalBF (BFVDec:is) ptr arr=readArray arr ptr >>= writeArray arr ptr . (+(-1)) >> evalBF is ptr arr
+evalBF (BFInput:is) ptr arr=getChar >>= writeArray arr ptr . fromIntegral . ord >> evalBF is ptr arr
+evalBF (BFOutput:is) ptr arr=readArray arr ptr >>= putChar . chr . fromIntegral >> evalBF is ptr arr
+evalBF is0@(BFLoop ss:is) ptr arr=do
     flag<-readArray arr ptr
-    if flag==0 then evalBF0 is ptr arr else evalBF0 ss ptr arr >> evalBF0 is0 ptr arr
+    if flag==0 then evalBF is ptr arr else evalBF ss ptr arr >> evalBF is0 ptr arr
 
 
 detectLoop is=pprog is
@@ -93,12 +111,12 @@ detectLoop is=pprog is
 pprog []=[]
 pprog is=let (t,is')=takeOne is in t:pprog is'
 
-takeOne (BF0Begin:is)=let (ts,is')=ploop is in (BF0Loop ts,is')
-takeOne (BF0End:_)=error "missing Begin"
+takeOne (BFBegin:is)=let (ts,is')=ploop is in (BFLoop ts,is')
+takeOne (BFEnd:_)=error "missing Begin"
 takeOne (i:is)=(i,is)
 
 ploop []=error "missing End"
-ploop (BF0End:is)=([],is)
+ploop (BFEnd:is)=([],is)
 ploop is=let (t,is')=takeOne is in let (ts,is'')=ploop is' in (t:ts,is'')
 
 
