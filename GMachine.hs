@@ -6,11 +6,52 @@ module GMachine where
 import Control.Monad
 import Control.Monad.State
 import Data.Char
+import Data.List
 import Data.Maybe
 import qualified Data.Map as M
 
 import Util
 import SAM
+
+
+data GFCompileFlag=GFCompileFlag
+    {addrSpace :: Int -- ^ bytes
+    }
+
+
+compile :: M.Map String [GMCode] -> Process SAM
+compile m
+    |codeSpace>1 = error "GM->SAM: 255+ super combinators are not supported"
+    |heapSpace>1 = error "GM->SAM: 2+ byte addresses are not supported"
+    |otherwise   = return $ SAM (ss++hs) [stack0]
+    where
+        codeSpace=ceiling $ log (fromIntegral $ M.size m+1)/log 256
+        heapSpace=1
+        ss=map (("S"++) . show) [0..heapSpace-1]
+        hs=["H0"]
+        
+
+
+compileCode :: M.Map String Int -> GMCode -> SProc
+compileCode m (PushSC k)=SProc ("PushSC"++show k) "S0" [] []
+    where n=m M.! k
+compileCode _ (Pack t n)=undefined
+compileCode _ (Slide n)=undefined
+compileCode _ (Push n)=undefined
+
+
+stack0 :: SProc
+stack0=SProc ("#stack0") "S0" []
+    [While Memory
+        [While Memory [Ptr (-1)]
+        ,Bank "S0" "S1"
+        ,While Memory [Ptr (-1)]
+        ,Bank "S1" "S0"]
+    ]
+
+
+
+
 
 data GMCode
     =Slide Int -- ^ pop 1st...nth items
@@ -28,23 +69,14 @@ data GMCode
     |MkByte Int
     deriving(Show)
 
-data GFCompileFlag=GFCompileFlag
-    {addrSpace :: Int -- ^ bytes
-    }
-
-
-
-
 
 pprintGM :: M.Map String [GMCode] -> String
-pprintGM=compileSB 0 . map (uncurry pprintGMF) . M.assocs
+pprintGM=compileSB 0 . intersperse SNewline . map (uncurry pprintGMF) . M.assocs
 
 pprintGMF :: String -> [GMCode] -> StrBlock
 pprintGMF name cs=SBlock
     [SPrim name,SPrim ":",SIndent,SNewline
-    ,SBlock $ map (\x->SBlock [SPrim $ show x,SNewline]) cs
-    ,SDedent,SNewline]
-
+    ,SBlock $ map (\x->SBlock [SPrim $ show x,SNewline]) cs]
 
 
 -- | G-machine state for use in 'interpretGM'
@@ -66,8 +98,7 @@ type Heap=M.Map Address GMNode
 newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
-compile :: M.Map String [GMCode] -> Process SAM
-compile m=return $ SAM undefined
+
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()

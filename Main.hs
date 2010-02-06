@@ -90,7 +90,8 @@ execCommand (Interpret opt from)=do
         LangSAM -> error "Interpretation of SAM is not supported"
         LangBFM -> error "Interpretation of BFM is not supported"
         LangBFC -> error "Interpretation of BFC is not supported"
-        LangBF -> evalWith Brainfuck.interpretBF $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= SAM.compile >>= Brainfuck.compileM >>= Brainfuck.compileC
+        LangBF -> evalWith Brainfuck.interpretBF $ runProcess $ xs >>= Front.compile >>= Core.compile >>=
+                            GMachine.compile >>= SAM.compile >>= Brainfuck.compileM >>= Brainfuck.compileC
     where
         evalWith :: (a->IO ()) -> Either [CompileError] a -> IO ()
         evalWith f=either (putStr . unlines . map show) f
@@ -98,14 +99,21 @@ execCommand (Interpret opt from)=do
 execCommand (Compile opt from)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
+    let core=xs >>= Front.compile
+        gm  =core >>= Core.compile
+        sam =gm   >>= GMachine.compile
+        bfm =sam  >>= SAM.compile
+        bfc =bfm  >>= Brainfuck.compileM
+        bf  =bfc  >>= Brainfuck.compileC
     case tolang opt of
-        LangCore -> outputWith Core.pprintCoreP $ runProcess $ xs >>= Front.compile
-        LangGMachine -> outputWith GMachine.pprintGM $ runProcess $ xs >>= Front.compile >>= Core.compile
-        LangSAM -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile
-        LangBFM -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= SAM.compile
-        LangBFC -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= SAM.compile >>= Brainfuck.compileM
-        LangBF -> outputWith show $ runProcess $ xs >>= Front.compile >>= Core.compile >>= GMachine.compile >>= SAM.compile >>= Brainfuck.compileM >>= Brainfuck.compileC
+        LangCore     -> capProcess core Core.pprintCoreP
+        LangGMachine -> capProcess gm  GMachine.pprintGM
+        LangSAM      -> capProcess sam SAM.pprint
+        LangBFM      -> capProcess bfm show
+        LangBFC      -> capProcess bfc show
+        LangBF       -> capProcess bf  show
     where
+        capProcess pr f=outputWith f $ runProcess pr
         outputWith :: (a->String) -> Either [CompileError] a -> IO ()
         outputWith f=putStr . either (unlines . map show) f
 

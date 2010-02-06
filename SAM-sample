@@ -134,4 +134,11 @@ pr exec@S0
 
 
 
-    
+dispatch f
+    0
+        X
+    1
+        Y
+    2
+        Z
+

@@ -99,7 +99,7 @@ adjustStack=aux 0
 -- | Pretty printer for 'CoreP'
 pprintCoreP :: CoreP -> String
 pprintCoreP (Core ds ps)=compileSB 0 $
-    map (pprintData (\_ x->x)) ds++map (pprintProc (\_ x->x)) ps
+    intersperse SNewline $ map (pprintData (\_ x->x)) ds++map (pprintProc (\_ x->x)) ps
 
 
 pprintData :: (a -> String -> String) -> CrData a -> StrBlock
@@ -107,15 +107,13 @@ pprintData f (CrData name xs cons)=SBlock $
     [SBlock [SPrim "data",SSpace,SPrim name]
     ,SIndent
     ,SNewline
-    ,SBlock $ zipWith f cons ("=":repeat "|")
-    ,SDedent
-    ,SNewline
+    ,SBlock $ zipWith cv cons ("=":repeat "|")
     ]
-    where f (name,xs) eq=SBlock [SPrim eq,SPrim name,SSpace,SPrim $ show $ length xs,SNewline]
+    where cv (name,xs) eq=SBlock [SPrim eq,SPrim name,SSpace,SPrim $ show $ length xs,SNewline]
 
 pprintProc f (CrProc n as e)=SBlock $
     (intersperse SSpace $ map (pprintAName f) $ n:as)++
-    [SPrim "=",SIndent,SNewline,pprintAExpr f e,SDedent,SNewline]
+    [SPrim "=",SIndent,SNewline,pprintAExpr f e]
 
 pprintAExpr f (CrA ea e)=pprintExpr f e
 pprintAName f (CrA na n)=SPrim $ f na n
@@ -124,7 +122,7 @@ pprintExpr f (CrLm ns e)=SBlock $ SPrim "\\":intersperse SSpace (map (pprintANam
     [SPrim "->",pprintAExpr f e]
 pprintExpr f (CrVar x)=SPrim x
 pprintExpr f (CrCase e as)=SBlock $
-    [SPrim "case",SSpace,pprintAExpr f e,SSpace,SPrim "of",SIndent,SNewline]++map cv as++[SDedent]
+    [SPrim "case",SSpace,pprintAExpr f e,SSpace,SPrim "of",SIndent,SNewline]++map cv as
     where cv (con,vs,e)=SBlock $ intersperse SSpace $ SPrim con:map (pprintAName f) vs++[SPrim "->",pprintAExpr f e]
 pprintExpr f (CrLet flag binds e)=SBlock $ (SPrim $ if flag then "letrec" else "let"):SSpace:map cv binds++
     [SSpace,SPrim "in",SSpace,pprintAExpr f e]

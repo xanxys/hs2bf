@@ -30,7 +30,7 @@ instance Show CompileError where
 
 instance Error [CompileError] where
     noMsg=[]
-    
+
 
 -- note for future me: Arrow vs. Monad
 --    Suppose each process can return either error or result.
@@ -72,17 +72,15 @@ data StrBlock
     |SSpace
     |SNewline
     |SIndent
-    |SDedent
 
 
 -- | Render ['StrBlock'] with an inital indentation
 compileSB :: Int -> [StrBlock] -> String
 compileSB _ []=""
-compileSB n ((SBlock ss):xs)=compileSB n $ ss++xs
+compileSB n ((SBlock ss):xs)=compileSB n ss++compileSB n xs
 compileSB n ((SPrim s):xs)=s++compileSB n xs
 compileSB n (SSpace:xs)=" "++compileSB n xs
 compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
 compileSB n (SIndent:xs)=compileSB (n+1) xs
-compileSB n (SDedent:xs)=compileSB (n-1) xs
 
 
