@@ -87,7 +87,8 @@ aux []=do
         App a0 a1 -> trans (push a0) >> aux []
         Combinator x -> return (Just x)
         Struct 0 [f] -> trans pop >> liftIO (liftM ord getChar) >>= \x->aux [MkByte x]
-        Struct 1 [x,k] -> trans pop >> trans (refHeap x) >>= liftIO . putChar . f >> trans (push k) >> aux []
+        Struct 1 [x,k] -> trans pop >> trans (refHeap x) >>= liftIO . putChar . f >>
+                          trans (push k) >> aux []
         Struct 2 [] -> trans pop >> return Nothing
     where f (Const x)=chr x
 

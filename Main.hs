@@ -1,17 +1,13 @@
--- | Decide what to do.
+-- | Create a chain based on given arguments and run it.
 --
--- Overall design policy:
+-- Overall development policy:
 --
--- * All intermediate-languages should be interpretable in 'IO' monad with exactly same behavior.
+-- * Refactoring makes better code than trying to come up with /elegant/ abstractions.
 --
+-- * All intermediate-languages should be interpretable in 'IO' monad with exactly same behavior,
+--   or at least have such semantics.
 --
--- [1. Interpreter]
---   interpret given code.
---
--- [2. Compiler]
---   compile given code into /brainfuck/.
---
--- In both modes, detailed error-checking using GHC are available via --with-ghc switch.
+-- See the source of 'help' for detailed description\/specification of features.
 module Main where
 import Control.Monad
 import Language.Haskell.Pretty
@@ -68,13 +64,13 @@ parseArgs _=ShowMessage "Invalid command. See 'hs2bf --help' for usage."
 parseOption :: [String] -> Option
 parseOption []=Option{optimize=False,bfAddrSpace=2,verbose=True,debug=False,tolang=LangBF}
 parseOption (term:xs)=case term of
-    "-O"   -> o{optimize=True}
-    "-Sc"  -> o{tolang=LangCore}
-    "-Sg"  -> o{tolang=LangGMachine}
+    "-O"  -> o{optimize=True}
+    "-Sc" -> o{tolang=LangCore}
+    "-Sg" -> o{tolang=LangGMachine}
     "-Ss" -> o{tolang=LangSAM}
     "-Sm" -> o{tolang=LangBFM}
     "-Sk" -> o{tolang=LangBFC}
-    "-Sb"  -> o{tolang=LangBF}
+    "-Sb" -> o{tolang=LangBF}
     _ -> error $ "unknown option:"++term
     where o=parseOption xs
 
