@@ -25,11 +25,12 @@ data SProc=SProc ProcName Region [RegName] [Stmt] deriving(Show)
 -- Choice between 'Memory' and 'Locate'
 --
 -- * 'Memory' is for local operation(in a frame), and you can expect it to be heavily optimzied.
---    (Why not use 'Locate' manually? - special register optimization is possible for 'Memory')
+--  (Why not use 'Locate' manually? - special register optimization is possible for 'Memory')
 --
--- * 'Locate' causes permanent change, and should be used for moving between frames.
+-- * 'Locate' causes permanent change, and should be used for moving between frames
+--  by not-predetermined amount.
 --
--- * So in principle, you should minimize use of 'Locate'
+-- * So in principle, you should minimize use of 'Locate', and use 'Memory' instead.
 data Stmt
     =While Pointer [Stmt]
     |Alloc RegName
@@ -89,5 +90,6 @@ pprintStmt (Alloc n)=SBlock [SPrim "alloc",SSpace,SPrim n]
 pprintStmt (Delete n)=SBlock [SPrim "delete",SSpace,SPrim n]
 pprintStmt (Move d ss)=SBlock $ [SPrim "move",SSpace]++intersperse SSpace (map (SPrim . show) $ d:ss)
 pprintStmt (Locate n)=SBlock [SPrim "locate",SSpace,SPrim $ show n]
-
-
+pprintStmt (Inline n rs)=SBlock $ intersperse SSpace $ SPrim "inline":map SPrim (n:rs)
+pprintStmt (Clear r)=SBlock [SPrim "clear",SSpace,SPrim $ show r]
+pprintStmt x=error $ "pprintStmt:"++show x
