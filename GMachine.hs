@@ -44,7 +44,7 @@ compile m
         lib=[origin,heapNew,stackNew]
         cmd=map (compileCode t) $ nub $ concat $ M.elems m
         prc=map (uncurry compileCodeBlock) $ M.assocs m
-        loop=[]
+        loop=[rootProc,setupMemory,mainLoop,eval,exec $ M.assocs t]
         
         -- layout configuration
         codeSpace=ceiling $ log (fromIntegral $ M.size m+1)/log 256
@@ -122,6 +122,77 @@ structTag=3
 refTag=4
 
 
+rootProc :: SProc
+rootProc=SProc "^" "S0" []
+    [Inline "%setupMemory" []
+    ,Inline "%mainLoop" []
+    ]
+
+
+setupMemory :: SProc
+setupMemory=SProc "%setupMemory" "S0" []
+    [Val (Memory addr) sc
+    ,Bank "H0"
+    ,Val (Memory 0) 4
+    ,Val (Memory 1) scTag
+    ,Val (Memory 2) sc
+    ,Val (Memory 3) addr -- addr
+    ,Bank "S0"
+    ]
+    where sc=1; addr=1
+
+mainLoop :: SProc
+mainLoop=SProc "%mainLoop" "S0" []
+    [SAM.Alloc "sc"
+    ,Val (Register "sc") 1 -- any non-zero number will do
+    ,While (Register "sc")
+        [Inline "eval" []
+        ,Inline "exec" []
+        ]
+    ]
+
+eval :: SProc
+eval=SProc "%eval" "S0" ["sc"]
+    [Inline "#stack0" []
+    ,SAM.Alloc "addr"
+    ,Move (Memory (-1)) [Register "addr"]
+    ,Inline "#stack0" []
+    ,Bank "H0"
+    ,Inline "#heapRef" ["addr"]
+    ,Delete "addr"
+    ,SAM.Alloc "tag"
+    ,SAM.Alloc "temp"
+    ,Move (Memory 1) [Register "temp"]
+    ,Move (Register "temp") [Memory 1,Register "tag"]
+    ,Dispatch (Register "tag")
+        [(scTag,
+            [Move (Memory 2) [Register "temp"]
+            ,Move (Register "temp") [Memory 2,Register "sc"]
+            ])
+        ,(structTag,
+            [Move (Memory 2) [Register "temp"]
+            ,SAM.Alloc "stag"
+            ,Move (Register "temp") [Memory 2,Register "stag"]
+            ,Dispatch (Register "stag")
+                [(2,[Clear (Register "sc")])] -- 0 :input 1:output 2:halt
+            ,Delete "stag"
+            ])
+        ]
+    ]
+
+exec :: [(String,Int)] -> SProc
+exec xs=SProc "%exec" "S0" ["sc"]
+    [SAM.Alloc "temp"
+    ,SAM.Alloc "temp2"
+    ,Move (Register "sc") [Register "temp",Register "temp2"]
+    ,Move (Register "temp") [Register "sc"]
+    ,Delete "temp"
+    ,Dispatch (Register "temp2") $ map f xs
+    ,Delete "temp2"
+    ]
+    where f (str,n)=(n,[Inline ("!"++str) []])
+
+
 
 -- | H0: move to a new heap allocation frame and put the id to addr from H0:0
 --
@@ -164,6 +235,29 @@ heapNew_=SProc "#heapNew_" "H0" []
     ,Delete "cnt"
     ]
 
+-- | H0: heap reference
+--
+-- from: head of heap frame 0
+--
+-- to: head of heap frame addr
+--
+-- addr will be 0 after this
+heapRef :: SProc
+heapRef=SProc "#heapRef" "H0" ["addr"]
+    [Val (Register "addr") (-1)
+    ,While (Register "addr")
+        [SAM.Alloc "temp"
+        ,SAM.Alloc "cnt"
+        ,Move (Memory 0) [Register "temp"]
+        ,Move (Register "temp") [Memory 0,Register "cnt"]
+        ,Delete "temp"
+        ,While (Register "cnt")
+            [Val (Register "cnt") (-1)
+            ,Locate 1
+            ]
+        ,Delete "cnt"
+        ]
+    ]
 
 -- | S0: from anywhere /before stack top/. Only use this when the condition is known to be met.
 stackNew :: SProc

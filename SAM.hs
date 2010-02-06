@@ -37,7 +37,6 @@ data Stmt
     |Delete RegName
     |Inline ProcName [RegName]
     |Dispatch Pointer [(Int,[Stmt])]
-    |Halt
     |Bank Region
     |Val Pointer Int
     |Move Pointer [Pointer]
@@ -80,6 +79,10 @@ pprintStmts :: [Stmt] -> StrBlock
 pprintStmts=SBlock . intersperse SNewline . map pprintStmt
 
 pprintStmt :: Stmt -> StrBlock
+pprintStmt (Dispatch ptr cs)=SBlock [t,b]
+    where
+        t=SBlock [SPrim "dispatch",SSpace,SPrim $ show ptr]
+        b=SBlock $ [SIndent,SNewline]++intersperse SNewline (map pprintCase cs)
 pprintStmt (While ptr ss)=SBlock [t,b]
     where
         t=SBlock [SPrim "while",SSpace,SPrim $ show ptr]
@@ -92,4 +95,9 @@ pprintStmt (Move d ss)=SBlock $ [SPrim "move",SSpace]++intersperse SSpace (map (
 pprintStmt (Locate n)=SBlock [SPrim "locate",SSpace,SPrim $ show n]
 pprintStmt (Inline n rs)=SBlock $ intersperse SSpace $ SPrim "inline":map SPrim (n:rs)
 pprintStmt (Clear r)=SBlock [SPrim "clear",SSpace,SPrim $ show r]
-pprintStmt x=error $ "pprintStmt:"++show x
+-- pprintStmt x=error $ "pprintStmt:"++show x
+
+
+pprintCase :: (Int,[Stmt]) -> StrBlock
+pprintCase (n,ss)=SBlock [SPrim $ show n,SIndent,SNewline,pprintStmts ss]
+
