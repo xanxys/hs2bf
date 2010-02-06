@@ -19,29 +19,79 @@ data GFCompileFlag=GFCompileFlag
     }
 
 
+-- | Compile 'GMCode's to SAM
 compile :: M.Map String [GMCode] -> Process SAM
 compile m
-    |codeSpace>1 = error "GM->SAM: 255+ super combinators are not supported"
+    |codeSpace>1 = error "GM->SAM: 255+ super combinator is not supported"
     |heapSpace>1 = error "GM->SAM: 2+ byte addresses are not supported"
-    |otherwise   = return $ SAM (ss++hs) [stack0]
+    |otherwise   = return $ SAM (ss++hs) (stdLib++[])
     where
         codeSpace=ceiling $ log (fromIntegral $ M.size m+1)/log 256
         heapSpace=1
         ss=map (("S"++) . show) [0..heapSpace-1]
         hs=["H0"]
+
+        stdLib=[origin,heapNew,stackNew]
         
 
 
+-- | Compile each code as a procedure. (This will be inlined in SC definition for readability)
 compileCode :: M.Map String Int -> GMCode -> SProc
-compileCode m (PushSC k)=SProc ("PushSC"++show k) "S0" [] []
-    where n=m M.! k
-compileCode _ (Pack t n)=undefined
-compileCode _ (Slide n)=undefined
-compileCode _ (Push n)=undefined
+compileCode m (PushSC k)=SProc ("PushSC_"++show k) "S0" []
+    [Inline "origin" []
+    ,Bank "S0" "H0"
+    ,SAM.Alloc "addr"
+    ,Inline "heapNew" ["addr"]
+    ,Val Memory 3 -- size(size)+size(SC)+size(addr)
+    ,Ptr 1
+    ,Clear Memory
+    ,Val Memory $ m M.! k
+    ,Ptr 1
+    ,Clear Memory
+    ,Move (Register "addr") [Memory]
+    ,Delete "addr"
+    ,Ptr 1
+    ,Clear Memory -- new frame
+    ]
+compileCode _ (Pack t n)=SProc ("Pack_"++show t++"_"++show n) "S0" []
+    []
+compileCode _ (Slide n)=SProc ("Slide_"++show n) "S0" []
+    [Inline "origin" []
+    ,Inline "stackNew" []
+    ,Ptr (-1)
+    ,Move Memory [Rel $ negate n]
+    ]
+compileCode _ (Push n)=SProc ("Push_"++show n) "S0" []
+    []
 
 
-stack0 :: SProc
-stack0=SProc ("#stack0") "S0" []
+-- | H0: move to a new heap allocation frame and put the id to addr from H0:0
+--
+-- Memory is 0 after this (that's a consequence from the memory allocator)
+heapNew :: SProc
+heapNew=SProc "#heapNew" "H0" ["addr"]
+    [SAM.Alloc "temp"
+    ,While Memory
+        [Move Memory [Register "addr"]
+        ,Move (Register "addr") [Memory,Register "temp"]
+        ,While (Register "temp")
+            [Val (Register "temp") (-1)
+            ,Ptr 1]
+        ]
+    ,Ptr (-1)
+    ,Move Memory [Register "temp",Register "addr"]
+    ,Move (Register "temp") [Memory]
+    ,Delete "temp"
+    ,Val (Register "addr") 1
+    ]
+
+
+stackNew :: SProc
+stackNew=undefined    
+
+-- | S0: goto 0 from anywhere
+origin :: SProc
+origin=SProc "#origin" "S0" []
     [While Memory
         [While Memory [Ptr (-1)]
         ,Bank "S0" "S1"
@@ -53,10 +103,11 @@ stack0=SProc ("#stack0") "S0" []
 
 
 
+
 data GMCode
     =Slide Int -- ^ pop 1st...nth items
     |Alloc Int
-    |Update Int -- ^ [n]:=Ind &[0] and pop 1
+    |Update Int -- ^ \[n\]:=Ind &\[0\] and pop 1
     |Pop Int -- ^ remove n items
     |MkApp
     |Eval
