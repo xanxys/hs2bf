@@ -39,27 +39,23 @@ compile m
 compileCode :: M.Map String Int -> GMCode -> SProc
 compileCode m (PushSC k)=SProc ("PushSC_"++show k) "S0" []
     [Inline "origin" []
-    ,Bank "S0" "H0"
+    ,Bank "H0"
     ,SAM.Alloc "addr"
     ,Inline "heapNew" ["addr"]
-    ,Val Memory 3 -- size(size)+size(SC)+size(addr)
-    ,Ptr 1
-    ,Clear Memory
-    ,Val Memory $ m M.! k
-    ,Ptr 1
-    ,Clear Memory
-    ,Move (Register "addr") [Memory]
+    ,Val (Memory 0) 3 -- size(size)+size(SC)+size(addr)
+    ,Clear (Memory 1)
+    ,Val (Memory 1) $ m M.! k
+    ,Clear (Memory 2)
+    ,Move (Register "addr") [Memory 2]
     ,Delete "addr"
-    ,Ptr 1
-    ,Clear Memory -- new frame
+    ,Clear (Memory 3) -- new frame
     ]
 compileCode _ (Pack t n)=SProc ("Pack_"++show t++"_"++show n) "S0" []
     []
 compileCode _ (Slide n)=SProc ("Slide_"++show n) "S0" []
     [Inline "origin" []
     ,Inline "stackNew" []
-    ,Ptr (-1)
-    ,Move Memory [Rel $ negate n]
+    ,Move (Memory 0) [Memory $ negate n]
     ]
 compileCode _ (Push n)=SProc ("Push_"++show n) "S0" []
     []
@@ -71,16 +67,15 @@ compileCode _ (Push n)=SProc ("Push_"++show n) "S0" []
 heapNew :: SProc
 heapNew=SProc "#heapNew" "H0" ["addr"]
     [SAM.Alloc "temp"
-    ,While Memory
-        [Move Memory [Register "addr"]
-        ,Move (Register "addr") [Memory,Register "temp"]
+    ,While (Memory 0)
+        [Move (Memory 0) [Register "addr"]
+        ,Move (Register "addr") [Memory 0,Register "temp"]
         ,While (Register "temp")
             [Val (Register "temp") (-1)
-            ,Ptr 1]
+            ,Locate 1]
         ]
-    ,Ptr (-1)
-    ,Move Memory [Register "temp",Register "addr"]
-    ,Move (Register "temp") [Memory]
+    ,Move (Memory (-1)) [Register "temp",Register "addr"]
+    ,Move (Register "temp") [Memory (-1)]
     ,Delete "temp"
     ,Val (Register "addr") 1
     ]
@@ -92,11 +87,11 @@ stackNew=undefined
 -- | S0: goto 0 from anywhere
 origin :: SProc
 origin=SProc "#origin" "S0" []
-    [While Memory
-        [While Memory [Ptr (-1)]
-        ,Bank "S0" "S1"
-        ,While Memory [Ptr (-1)]
-        ,Bank "S1" "S0"]
+    [While (Memory 0)
+        [While (Memory 0) [Locate (-1)]
+        ,Bank "S1"
+        ,While (Memory 0) [Locate (-1)]
+        ,Bank "S0"]
     ]
 
 

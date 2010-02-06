@@ -20,6 +20,16 @@ data SAM=SAM [Region] [SProc] deriving(Show)
 
 data SProc=SProc ProcName Region [RegName] [Stmt] deriving(Show)
 
+-- | Statement set of SAM.
+--
+-- Choice between 'Memory' and 'Locate'
+--
+-- * 'Memory' is for local operation(in a frame), and you can expect it to be heavily optimzied.
+--    (Why not use 'Locate' manually? - special register optimization is possible for 'Memory')
+--
+-- * 'Locate' causes permanent change, and should be used for moving between frames.
+--
+-- * So in principle, you should minimize use of 'Locate'
 data Stmt
     =While Pointer [Stmt]
     |Alloc RegName
@@ -27,21 +37,23 @@ data Stmt
     |Inline ProcName [RegName]
     |Dispatch Pointer [(Int,[Stmt])]
     |Halt
-    |Bank Region Region
-    |Ptr Int
+    |Bank Region
     |Val Pointer Int
     |Move Pointer [Pointer]
+    |Locate Int -- ^ ptr+=n
     |Clear Pointer -- ^ treat as a syntax sugar of Move p []
     deriving(Show)
 
 data Pointer
     =Register RegName
-    |Memory
-    |Rel Int   -- Necessary for Move Memory [Rel 1] (Is this good? Can memory accesses optimized later?)
+    |Memory Int
 
 instance Show Pointer where
     show (Register x)=x
-    show Memory="$"
+    show (Memory n)
+        |n==0 = "$"
+        |n>0  = "$+"++show n
+        |n<0  = "$"++show n
 
 type Region=String
 type ProcName=String
@@ -71,11 +83,11 @@ pprintStmt (While ptr ss)=SBlock [t,b]
     where
         t=SBlock [SPrim "while",SSpace,SPrim $ show ptr]
         b=SBlock [SIndent,SNewline,pprintStmts ss]
-pprintStmt (Ptr n)=SBlock [SPrim "ptr",SSpace,SPrim $ show n]
-pprintStmt (Bank fr to)=SBlock [SPrim "bank",SSpace,SPrim fr,SSpace,SPrim to]
+pprintStmt (Bank to)=SBlock [SPrim "bank",SSpace,SPrim to]
 pprintStmt (Val p n)=SBlock [SPrim "val",SSpace,SPrim $ show p,SSpace,SPrim $ show n]
 pprintStmt (Alloc n)=SBlock [SPrim "alloc",SSpace,SPrim n]
 pprintStmt (Delete n)=SBlock [SPrim "delete",SSpace,SPrim n]
 pprintStmt (Move d ss)=SBlock $ [SPrim "move",SSpace]++intersperse SSpace (map (SPrim . show) $ d:ss)
+pprintStmt (Locate n)=SBlock [SPrim "locate",SSpace,SPrim $ show n]
 
 
