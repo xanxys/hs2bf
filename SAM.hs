@@ -34,6 +34,7 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Word
 
 
@@ -61,32 +62,33 @@ simplify=undefined
 -- | Sequential Access Machine
 data SAM=SAM [Region] [SProc] deriving(Show)
 
-data SProc=SProc ProcName Region [RegName] [Stmt] deriving(Show)
+data SProc=SProc ProcName [RegName] [Stmt] deriving(Show)
 
 -- | Statement set of SAM.
+--
+-- Operations with 'RegName' in their arguments changes scope
 data Stmt
-    =While Pointer [Stmt]
+    =Locate Int -- ^ ptr+=n
     |Alloc RegName
     |Delete RegName
-    |Inline ProcName [RegName]
     |Dispatch Pointer [(Int,[Stmt])]
-    |Bank Region
-    |Val Pointer Int
-    |Move Pointer [Pointer]
-    |Locate Int -- ^ ptr+=n
+    |Inline ProcName [RegName]
     |Clear Pointer -- ^ treat as a syntax sugar of Move p []
+    |Move Pointer [Pointer]
+    |Val Pointer Int
+    |While Pointer [Stmt]
     deriving(Show)
 
 data Pointer
     =Register RegName
-    |Memory Int
+    |Memory Region Int
 
 instance Show Pointer where
     show (Register x)=x
-    show (Memory n)
-        |n==0 = "$"
-        |n>0  = "$+"++show n
-        |n<0  = "$"++show n
+    show (Memory region n)
+        |n==0 = "$"++region
+        |n>0  = "$"++region++"+"++show n
+        |n<0  = "$"++region++show n
 
 type Region=String
 type ProcName=String
@@ -102,9 +104,9 @@ pprint (SAM rs ps)=compileSB 0 [pre,SNewline,SNewline,procs]
         procs=SBlock $ intersperse SNewline $ map pprintSP ps
 
 pprintSP :: SProc -> StrBlock
-pprintSP (SProc name reg args st)=SBlock [def,SIndent,SNewline,pprintStmts st,SNewline]
+pprintSP (SProc name args st)=SBlock [def,SIndent,SNewline,pprintStmts st,SNewline]
     where
-        def=SBlock $ [SPrim "pr",SSpace,SPrim name,SPrim "@",SPrim reg]++darg
+        def=SBlock $ [SPrim "pr",SSpace,SPrim name]++darg
         darg|null args = []
             |otherwise = SPrim "/":intersperse SSpace (map SPrim args)
 
@@ -120,7 +122,6 @@ pprintStmt (While ptr ss)=SBlock [t,b]
     where
         t=SBlock [SPrim "while",SSpace,SPrim $ show ptr]
         b=SBlock [SIndent,SNewline,pprintStmts ss]
-pprintStmt (Bank to)=SBlock [SPrim "bank",SSpace,SPrim to]
 pprintStmt (Val p n)=SBlock [SPrim "val",SSpace,SPrim $ show p,SSpace,SPrim $ show n]
 pprintStmt (Alloc n)=SBlock [SPrim "alloc",SSpace,SPrim n]
 pprintStmt (Delete n)=SBlock [SPrim "delete",SSpace,SPrim n]
@@ -148,8 +149,8 @@ flatten (SAM rs ps)=SAM rs [flattenProc m (m M.! "^")]
 
 
 flattenProc :: M.Map ProcName SProc -> SProc -> SProc
-flattenProc m proc@(SProc n reg rs ss)
-    |any expandable ss = flattenProc m $ SProc n reg rs $ concatMap f ss
+flattenProc m proc@(SProc n rs ss)
+    |any expandable ss = flattenProc m $ SProc n rs $ concatMap f ss
     |otherwise         = proc
     where
         f (Inline n ss)=expandProc ss $ M.findWithDefault (error $ "flattenProc:unknown proc "++n) n m
@@ -165,10 +166,12 @@ flattenProc m proc@(SProc n reg rs ss)
 
 
 expandProc :: [RegName] -> SProc -> [Stmt]
-expandProc rs (SProc name reg rs' ss)
-    |length rs/=length rs' = error $ "expandProc: arity error in "++name
+expandProc rs_parent (SProc name rs_child ss)
+    |length rs_parent/=length rs_child = error $ "expandProc: arity error in "++name
     |otherwise = map (replaceStmt t) ss
-    where t=M.fromList $ zipWith (\s d->(d,s++"/"++d)) rs rs'
+    where
+        pairs=filter (uncurry (/=)) $ zip rs_child rs_parent
+        t=M.fromList $ concatMap (\(c,p)->[(c,p),(p,c++"/")]) pairs
 
 
 -- | Apply register name transformation. Only valid under correct scoping.
@@ -188,7 +191,35 @@ replacePtr m (Register x)=Register $ M.findWithDefault x x m
 replacePtr _ p=p
 
 procName :: SProc -> String
-procName (SProc x _ _ _)=x
-        
+procName (SProc x _ _)=x
+
+
+-- | Find static erros in a 'SProc'.
+-- 
+-- * unknown registers
+--
+-- * unmatched register and bank in 'While' and 'Dispatch'
+--
+-- * modification of flag register in 'Dispatch'
+--
+-- All of this is handled
+{-
+checkProc :: SProc -> [CompileError]
+checkProc (SProc name reg rs ss)
+    |length rs/=length (nub rs) = [CompileError "SAM" ("proc "++name) "duplicate arguments"
+    |S.Set
+
+checkStmt :: Stmt -> S.Set RegName -> Either (String,String) (S.Set RegName)
+checkStmt (While ptr ss) (rs,r)
+    |
+
+
+
+
+checkPointer :: Pointer -> (S.Set RegName,Region) -> Bool
+checkPointer (Register x) (rs,_)=S.member x rs
+checkPointer _=True
+
+-}
 
 

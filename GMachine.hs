@@ -55,7 +55,7 @@ compile m
 
 
 compileCodeBlock :: String -> [GMCode] -> SProc
-compileCodeBlock name cs=SProc ("!"++name) "S0" [] $ map (flip Inline [] . compileName) cs
+compileCodeBlock name cs=SProc ("!"++name) [] $ map (flip Inline [] . compileName) cs
 
 
 compileName :: GMCode -> String
@@ -66,53 +66,53 @@ compileName (Push n)  ="%Push_"++show n
 
 -- | Compile a single 'GMCode' to a procedure.
 compileCode :: M.Map String Int -> GMCode -> SProc
-compileCode m c=SProc (compileName c) "S0" [] $ case c of
+compileCode m c=SProc (compileName c) [] $ case c of
     PushSC k ->
         [Inline "#origin" []
-        ,Bank "H0"
         ,SAM.Alloc "addr"
         ,Inline "#heapNew" ["addr"]
-        ,Clear (Memory 3),Move (Register "addr") [Memory 3]
+        ,Clear (Memory "H0" 3),Move (Register "addr") [Memory "H0" 3]
         ,Delete "addr"
-        ,Val (Memory 0) 4 -- size(size)+size(tag)+size(SC)+size(addr)
-        ,Clear (Memory 1),Val (Memory 1) $ m M.! k
-        ,Clear (Memory 2),Val (Memory 2) scTag
-        ,Clear (Memory 4) -- new frame
-        ,Bank "S0"
+        ,Val (Memory "H0" 0) 4 -- size(size)+size(tag)+size(SC)+size(addr)
+        ,Clear (Memory "H0" 1),Val (Memory "H0" 1) $ m M.! k
+        ,Clear (Memory "H0" 2),Val (Memory "H0" 2) scTag
+        ,Clear (Memory "H0" 4) -- new frame
         ]
     Pack t n ->
         [Inline "#origin" []
-        ,Bank "H0"
         ,SAM.Alloc "addr"
         ,Inline "#heapNew" ["addr"]
-        ,Clear (Memory $ 3+n),Move (Register "addr") [Memory $ 3+n]
+        ,Clear (Memory "H0" $ 3+n),Move (Register "addr") [Memory "H0" $ 3+n]
         ,Delete "addr"
-        ,Val (Memory 0) $ 4+n -- size
-        ,Clear (Memory 1),Val (Memory 1) structTag -- frame tag
-        ,Clear (Memory 2),Val (Memory 2) t -- struct tag
-        ,Clear (Memory $ 4+n) -- new frame
+        ,Val (Memory "H0" 0) $ 4+n -- size
+        ,Clear (Memory "H0" 1),Val (Memory "H0" 1) structTag -- frame tag
+        ,Clear (Memory "H0" 2),Val (Memory "H0" 2) t -- struct tag
+        ,Clear (Memory "H0" $ 4+n) -- new frame
         ,SAM.Alloc "temp"
         ]
         ++concatMap st2heap (reverse [1..n]) -- pack struct members from back to front
-        ++[SAM.Delete "temp",Bank "S0"]
-        where st2heap ix=[Bank "S0",Inline "#origin" [],Inline "#stackNew" []
-                         ,Locate (-1),Move (Memory 0) [Register "temp"]
-                         ,Inline "#origin" [],Bank "H0",Inline "#heapNew_" []
-                         ,Move (Register "temp") [Memory $ negate $ 1+ix]
+        ++[SAM.Delete "temp"]
+        where st2heap ix=[Inline "#origin" []
+                         ,Inline "#stackNew" []
+                         ,Locate (-1)
+                         ,Move (Memory "S0" 0) [Register "temp"]
+                         ,Inline "#origin" []
+                         ,Inline "#heapNew_" []
+                         ,Move (Register "temp") [Memory "H0" $ negate $ 1+ix]
                          ]
     Slide n ->
         [Inline "#origin" []
         ,Inline "#stackNew" []
         ,Locate (-1)
-        ,Move (Memory 0) [Memory $ negate n]
+        ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
         ]
-        ++map (Clear . Memory . negate) [1..n-1]
+        ++map (Clear . Memory "S0" . negate) [1..n-1]
     Push n ->
         [Inline "#origin" []
         ,Inline "#stackNew" []
         ,SAM.Alloc "temp"
-        ,Move (Memory $ negate $ n+1) [Memory 0,Register "temp"]
-        ,Move (Register "temp") [Memory $ negate $ n+1]
+        ,Move (Memory "S0" $ negate $ n+1) [Memory "S0" 0,Register "temp"]
+        ,Move (Register "temp") [Memory "S0" $ negate $ n+1]
         ]
 
 appTag=0
@@ -123,65 +123,64 @@ refTag=4
 
 
 rootProc :: SProc
-rootProc=SProc "^" "S0" []
+rootProc=SProc "^" []
     [Inline "%setupMemory" []
     ,Inline "%mainLoop" []
     ]
 
 
 setupMemory :: SProc
-setupMemory=SProc "%setupMemory" "S0" []
-    [Val (Memory addr) sc
-    ,Bank "H0"
-    ,Val (Memory 0) 4
-    ,Val (Memory 1) scTag
-    ,Val (Memory 2) sc
-    ,Val (Memory 3) addr -- addr
-    ,Bank "S0"
+setupMemory=SProc "%setupMemory" []
+    [Val (Memory "S0" addr) sc
+    ,Val (Memory "H0" 0) 4
+    ,Val (Memory "H0" 1) scTag
+    ,Val (Memory "H0" 2) sc
+    ,Val (Memory "H0" 3) addr -- addr
     ]
     where sc=1; addr=1
 
 mainLoop :: SProc
-mainLoop=SProc "%mainLoop" "S0" []
+mainLoop=SProc "%mainLoop" []
     [SAM.Alloc "sc"
     ,Val (Register "sc") 1 -- any non-zero number will do
     ,While (Register "sc")
         [Inline "%eval" ["sc"]
         ,Inline "%exec" ["sc"]
         ]
+    ,Delete "sc"
     ]
 
 eval :: SProc
-eval=SProc "%eval" "S0" ["sc"]
+eval=SProc "%eval" ["sc"]
     [Inline "#origin" []
     ,SAM.Alloc "addr"
-    ,Move (Memory (-1)) [Register "addr"]
+    ,Move (Memory "S0" (-1)) [Register "addr"]
     ,Inline "#origin" []
-    ,Bank "H0"
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"
     ,SAM.Alloc "tag"
     ,SAM.Alloc "temp"
-    ,Move (Memory 1) [Register "temp"]
-    ,Move (Register "temp") [Memory 1,Register "tag"]
+    ,Move (Memory "H0" 1) [Register "temp"]
+    ,Move (Register "temp") [Memory "H0" 1,Register "tag"]
     ,Dispatch (Register "tag")
         [(scTag,
-            [Move (Memory 2) [Register "temp"]
-            ,Move (Register "temp") [Memory 2,Register "sc"]
+            [Move (Memory "H0" 2) [Register "temp"]
+            ,Move (Register "temp") [Memory "H0" 2,Register "sc"]
             ])
         ,(structTag,
-            [Move (Memory 2) [Register "temp"]
+            [Move (Memory "H0" 2) [Register "temp"]
             ,SAM.Alloc "stag"
-            ,Move (Register "temp") [Memory 2,Register "stag"]
+            ,Move (Register "temp") [Memory "H0" 2,Register "stag"]
             ,Dispatch (Register "stag")
                 [(2,[Clear (Register "sc")])] -- 0 :input 1:output 2:halt
             ,Delete "stag"
             ])
         ]
+    ,Delete "temp"
     ]
 
 exec :: [(String,Int)] -> SProc
-exec xs=SProc "%exec" "S0" ["sc"]
+exec xs=SProc "%exec" ["sc"]
     [SAM.Alloc "temp"
     ,SAM.Alloc "temp2"
     ,Move (Register "sc") [Register "temp",Register "temp2"]
@@ -200,33 +199,33 @@ exec xs=SProc "%exec" "S0" ["sc"]
 --
 -- Memory is 0 after this (that's a consequence from the memory allocator)
 heapNew :: SProc
-heapNew=SProc "#heapNew" "H0" ["addr"]
+heapNew=SProc "#heapNew" ["addr"]
     [SAM.Alloc "temp"
-    ,While (Memory 0)
-        [Move (Memory 0) [Register "addr"]
-        ,Move (Register "addr") [Memory 0,Register "temp"]
+    ,While (Memory "H0" 0)
+        [Move (Memory "H0" 0) [Register "addr"]
+        ,Move (Register "addr") [Memory "H0" 0,Register "temp"]
         ,While (Register "temp")
             [Val (Register "temp") (-1)
             ,Locate 1]
         ]
-    ,Move (Memory (-1)) [Register "temp",Register "addr"]
-    ,Move (Register "temp") [Memory (-1)]
+    ,Move (Memory "H0" (-1)) [Register "temp",Register "addr"]
+    ,Move (Register "temp") [Memory "H0" (-1)]
     ,Delete "temp"
     ,Val (Register "addr") 1
     ]
 
--- | H0: move to a new heap allocation frame
+-- | move to a new heap allocation frame
 --
 -- from: head of heap frame
 --
 -- Memory is 0 after this (that's a consequence from the memory allocator)
 heapNew_ :: SProc
-heapNew_=SProc "#heapNew_" "H0" []
+heapNew_=SProc "#heapNew_" []
     [SAM.Alloc "temp"
     ,SAM.Alloc "cnt"
-    ,While (Memory 0)
-        [Move (Memory 0) [Register "temp"]
-        ,Move (Register "temp") [Memory 0,Register "cnt"]
+    ,While (Memory "H0" 0)
+        [Move (Memory "H0" 0) [Register "temp"]
+        ,Move (Register "temp") [Memory "H0" 0,Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1]
@@ -243,13 +242,13 @@ heapNew_=SProc "#heapNew_" "H0" []
 --
 -- addr will be 0 after this
 heapRef :: SProc
-heapRef=SProc "#heapRef" "H0" ["addr"]
+heapRef=SProc "#heapRef" ["addr"]
     [Val (Register "addr") (-1)
     ,While (Register "addr")
         [SAM.Alloc "temp"
         ,SAM.Alloc "cnt"
-        ,Move (Memory 0) [Register "temp"]
-        ,Move (Register "temp") [Memory 0,Register "cnt"]
+        ,Move (Memory "H0" 0) [Register "temp"]
+        ,Move (Register "temp") [Memory "H0" 0,Register "cnt"]
         ,Delete "temp"
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
@@ -261,13 +260,13 @@ heapRef=SProc "#heapRef" "H0" ["addr"]
 
 -- | S0: from anywhere /before stack top/. Only use this when the condition is known to be met.
 stackNew :: SProc
-stackNew=SProc "#stackNew" "S0" []
-    [While (Memory 0) [Locate 1]]
+stackNew=SProc "#stackNew" []
+    [While (Memory "S0" 0) [Locate 1]]
 
 -- | S0: goto 0 from anywhere
 origin :: SProc
-origin=SProc "#origin" "S0" []
-    [While (Memory 0) [Locate (-1)]]
+origin=SProc "#origin" []
+    [While (Memory "S0" 0) [Locate (-1)]]
 
 
 

@@ -2,7 +2,7 @@
 --
 -- Overall development policy:
 --
--- * Refactoring makes better code than trying to come up with /elegant/ abstractions.
+-- * If you seek /elegant/ abstraction, you will get /elephant/ abstraction.
 --
 -- * All intermediate-languages should be interpretable in 'IO' monad with exactly same behavior,
 --   or at least have such semantics.
