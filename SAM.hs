@@ -39,10 +39,10 @@ import Data.Word
 
 
 import Util
-import Brainfuck
+import SCGR
 
 
-compile :: SAM -> Process BF
+compile :: SAM -> Process SCGR
 compile x=return undefined
 
 
@@ -202,11 +202,11 @@ procName (SProc x _ _)=x
 --
 -- * modification of flag register in 'Dispatch'
 --
--- All of this is handled
+-- All of this is handled via 
 {-
 checkProc :: SProc -> [CompileError]
-checkProc (SProc name reg rs ss)
-    |length rs/=length (nub rs) = [CompileError "SAM" ("proc "++name) "duplicate arguments"
+checkProc (SProc name args ss)
+    |length args/=length (nub args) = [CompileError "SAM" ("proc "++name) "duplicate arguments"
     |S.Set
 
 checkStmt :: Stmt -> S.Set RegName -> Either (String,String) (S.Set RegName)
@@ -216,7 +216,7 @@ checkStmt (While ptr ss) (rs,r)
 
 
 
-checkPointer :: Pointer -> (S.Set RegName,Region) -> Bool
+checkPointer :: Pointer -> S.Set RegName -> Bool
 checkPointer (Register x) (rs,_)=S.member x rs
 checkPointer _=True
 

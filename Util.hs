@@ -41,7 +41,7 @@ instance Error [CompileError] where
 --    w a b -> w [a] [b] : Arrow form
 -- 
 -- How to decide on one?
---    If you can write [m b] -> m [b] , then use Monad(Plus).
+--    If you can write [m b] -> m [b] , then use Monad.
 --   Otherwise use Arrow.
 
 
