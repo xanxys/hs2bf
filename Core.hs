@@ -22,7 +22,8 @@ import qualified Data.Map as M
 import Data.Sequence((><),(|>),(<|))
 import qualified Data.Sequence as S
 
-import Util
+import Util as U hiding(Pack)
+import qualified Util as U
 import GMachine
 
 
@@ -98,38 +99,38 @@ adjustStack=aux 0
 
 -- | Pretty printer for 'CoreP'
 pprintCoreP :: CoreP -> String
-pprintCoreP (Core ds ps)=compileSB 0 $
-    intersperse SNewline $ map (pprintData (\_ x->x)) ds++map (pprintProc (\_ x->x)) ps
+pprintCoreP (Core ds ps)=compileSB $ U.Pack $ map (pprintData (\_ x->x)) ds++map (pprintProc (\_ x->x)) ps
 
 
 pprintData :: (a -> String -> String) -> CrData a -> StrBlock
-pprintData f (CrData name xs cons)=SBlock $
-    [SBlock [SPrim "data",SSpace,SPrim name]
-    ,SIndent
-    ,SNewline
-    ,SBlock $ zipWith cv cons ("=":repeat "|")
-    ]
-    where cv (name,xs) eq=SBlock [SPrim eq,SPrim name,SSpace,SPrim $ show $ length xs,SNewline]
+pprintData f (CrData name xs cons)=Line $ U.Pack
+    [Line $ Span [Prim "data",Prim name]
+    ,Indent $ U.Pack $ zipWith cv cons ("=":repeat "|")]
+    where cv (name,xs) eq=Line $ Span [U.Pack [Prim eq,Prim name],Prim $ show $ length xs]
 
-pprintProc f (CrProc n as e)=SBlock $
-    (intersperse SSpace $ map (pprintAName f) $ n:as)++
-    [SPrim "=",SIndent,SNewline,pprintAExpr f e]
+pprintProc f (CrProc n as e)=Line $ U.Pack
+    [Line $ U.Pack [Span $ map (pprintAName f) $ n:as,Prim "="]
+    ,Indent $ pprintAExpr f e]
 
 pprintAExpr f (CrA ea e)=pprintExpr f e
-pprintAName f (CrA na n)=SPrim $ f na n
+pprintAName f (CrA na n)=Prim $ f na n
 
-pprintExpr f (CrLm ns e)=SBlock $ SPrim "\\":intersperse SSpace (map (pprintAName f) ns)++
-    [SPrim "->",pprintAExpr f e]
-pprintExpr f (CrVar x)=SPrim x
-pprintExpr f (CrCase e as)=SBlock $
-    [SPrim "case",SSpace,pprintAExpr f e,SSpace,SPrim "of",SIndent,SNewline]++map cv as
-    where cv (con,vs,e)=SBlock $ intersperse SSpace $ SPrim con:map (pprintAName f) vs++[SPrim "->",pprintAExpr f e]
-pprintExpr f (CrLet flag binds e)=SBlock $ (SPrim $ if flag then "letrec" else "let"):SSpace:map cv binds++
-    [SSpace,SPrim "in",SSpace,pprintAExpr f e]
-    where cv (v,e)=SBlock [pprintAName f v,SPrim "=",pprintAExpr f e]
-pprintExpr f (CrApp e0 e1)=SBlock [SPrim "(",pprintAExpr f e0,SSpace,pprintAExpr f e1,SPrim ")"]
-pprintExpr f (CrInt n)=SPrim $ show n
-pprintExpr f (CrByte n)=SPrim $ show n
+pprintExpr f (CrLm ns e)=U.Pack $
+    [U.Pack [Prim "\\",Span (map (pprintAName f) ns)]
+    ,U.Pack [Prim "->",pprintAExpr f e]]
+pprintExpr f (CrVar x)=Prim x
+pprintExpr f (CrCase e as)=U.Pack $
+    [Line $ Span [Prim "case",pprintAExpr f e,Prim "of"]
+    ,Indent $ U.Pack $ map cv as]
+    where cv (con,vs,e)=Line $ Span [Span $ Prim con:map (pprintAName f) vs,Prim "->",pprintAExpr f e]
+pprintExpr f (CrLet flag binds e)=Span $
+    [Span $ (Prim $ if flag then "letrec" else "let"):map cv binds
+    ,Prim "in"
+    ,pprintAExpr f e]
+    where cv (v,e)=U.Pack [pprintAName f v,Prim "=",pprintAExpr f e,Prim ";"]
+pprintExpr f (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintAExpr f e0,pprintAExpr f e1],Prim ")"]
+pprintExpr f (CrInt n)=Prim $ show n
+pprintExpr f (CrByte n)=Prim $ show n
 -- pprintExpr f (Cr
 pprintExpr f e=error $ "pprintExpr:"++show e
 

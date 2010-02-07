@@ -16,6 +16,7 @@ import Control.Monad.Error
 import Control.Monad.State
 import Control.Monad.Identity
 import qualified Data.IntMap as IM
+import Data.List
 import Data.Word
 
 
@@ -71,20 +72,23 @@ runNMR=second snd . flip runState ([],[])
 
 -- | Nested string with indent for general pretty printing
 data StrBlock
-    =SBlock [StrBlock]
-    |SPrim String
-    |SSpace
-    |SNewline
-    |SIndent
+    =Prim String
+    |Pack [StrBlock]
+    |Span [StrBlock]
+    |Line StrBlock
+    |Indent StrBlock
 
--- | Render ['StrBlock'] with an inital indentation
-compileSB :: Int -> [StrBlock] -> String
-compileSB _ []=""
-compileSB n ((SBlock ss):xs)=compileSB n ss++compileSB n xs
-compileSB n ((SPrim s):xs)=s++compileSB n xs
-compileSB n (SSpace:xs)=" "++compileSB n xs
-compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
-compileSB n (SIndent:xs)=compileSB (n+1) xs
+-- | Render 'StrBlock'
+compileSB :: StrBlock -> String
+compileSB=caux 0
+
+caux :: Int -> StrBlock -> String
+caux n (Prim x)=x
+caux n (Pack ss)=concatMap (caux n) ss
+caux n (Span ss)=concatMap (caux n) $ intersperse (Prim " ") ss
+caux n (Line b)=replicate (4*n) ' '++caux n b++"\n"
+caux n (Indent b)=caux (n+1) b
+
 
 
 

@@ -37,7 +37,6 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Word
 
-
 import Util
 import SCGR
 
@@ -106,42 +105,39 @@ type RegName=String
 
 
 pprint :: SAM -> String
-pprint (SAM rs ps)=compileSB 0 [pre,SNewline,SNewline,procs]
+pprint (SAM rs ps)=compileSB $ Pack [Line $ Line pre,procs]
     where
-        pre=SBlock $ intersperse SSpace $ map SPrim rs
-        procs=SBlock $ intersperse SNewline $ map pprintSP ps
+        pre=Span $ map Prim rs
+        procs=Pack $ map pprintSP ps
 
 pprintSP :: SProc -> StrBlock
-pprintSP (SProc name args st)=SBlock [def,SIndent,SNewline,pprintStmts st,SNewline]
+pprintSP (SProc name args st)=Line $ Pack [def,Indent $ Pack $ map pprintStmt st]
     where
-        def=SBlock $ [SPrim "pr",SSpace,SPrim name]++darg
+        def=Line $ Span [Prim "pr",Pack $ Prim name:darg]
         darg|null args = []
-            |otherwise = SPrim "/":intersperse SSpace (map SPrim args)
-
-pprintStmts :: [Stmt] -> StrBlock
-pprintStmts=SBlock . intersperse SNewline . map pprintStmt
+            |otherwise = [Prim "/",Span $ map Prim args]
 
 pprintStmt :: Stmt -> StrBlock
-pprintStmt (Dispatch n cs)=SBlock [t,b]
+pprintStmt (Dispatch n cs)=Pack [t,Indent b]
     where
-        t=SBlock [SPrim "dispatch",SSpace,SPrim n]
-        b=SBlock $ [SIndent,SNewline]++intersperse SNewline (map pprintCase cs)
-pprintStmt (While ptr ss)=SBlock [t,b]
+        t=Line $ Span [Prim "dispatch",Prim n]
+        b=Pack $ map pprintCase cs
+pprintStmt (While ptr ss)=Pack [t,Indent b]
     where
-        t=SBlock [SPrim "while",SSpace,SPrim $ show ptr]
-        b=SBlock [SIndent,SNewline,pprintStmts ss]
-pprintStmt (Val p n)=SBlock [SPrim "val",SSpace,SPrim $ show p,SSpace,SPrim $ show n]
-pprintStmt (Alloc n)=SBlock [SPrim "alloc",SSpace,SPrim n]
-pprintStmt (Delete n)=SBlock [SPrim "delete",SSpace,SPrim n]
-pprintStmt (Move d ss)=SBlock $ [SPrim "move",SSpace]++intersperse SSpace (map (SPrim . show) $ d:ss)
-pprintStmt (Locate n)=SBlock [SPrim "locate",SSpace,SPrim $ show n]
-pprintStmt (Inline n rs)=SBlock $ intersperse SSpace $ SPrim "inline":map SPrim (n:rs)
-pprintStmt (Clear r)=SBlock [SPrim "clear",SSpace,SPrim $ show r]
+        t=Line $ Span [Prim "while",Prim $ show ptr]
+        b=Pack $ map pprintStmt ss
+pprintStmt (Val p n)=Line $ Span [Prim "val",Prim $ show p,Prim $ show n]
+pprintStmt (Alloc n)=Line $ Span [Prim "alloc",Prim n]
+pprintStmt (Delete n)=Line $ Span [Prim "delete",Prim n]
+pprintStmt (Move d ss)=Line $ Span $ Prim "move":map (Prim . show) (d:ss)
+pprintStmt (Locate n)=Line $ Span [Prim "locate",Prim $ show n]
+pprintStmt (Inline n rs)=Line $ Span $ map Prim ("inline":n:rs)
+pprintStmt (Clear r)=Line $ Span [Prim "clear",Prim $ show r]
 -- pprintStmt x=error $ "pprintStmt:"++show x
 
 
 pprintCase :: (Int,[Stmt]) -> StrBlock
-pprintCase (n,ss)=SBlock [SPrim $ show n,SIndent,SNewline,pprintStmts ss]
+pprintCase (n,ss)=Pack [Line $ Prim $ show n,Indent $ Pack $ map pprintStmt ss]
 
 
 

@@ -10,7 +10,8 @@ import Data.List
 import Data.Maybe
 import qualified Data.Map as M
 
-import Util
+import Util as U hiding(Pack)
+import qualified Util as U
 import SAM
 
 
@@ -292,12 +293,12 @@ data GMCode
 
 
 pprintGM :: M.Map String [GMCode] -> String
-pprintGM=compileSB 0 . intersperse SNewline . map (uncurry pprintGMF) . M.assocs
+pprintGM=compileSB . U.Pack . map (uncurry pprintGMF) . M.assocs
 
 pprintGMF :: String -> [GMCode] -> StrBlock
-pprintGMF name cs=SBlock
-    [SPrim name,SPrim ":",SIndent,SNewline
-    ,SBlock $ map (\x->SBlock [SPrim $ show x,SNewline]) cs]
+pprintGMF name cs=Line $ U.Pack
+    [U.Pack [Prim name,Prim ":"]
+    ,Indent $ U.Pack $ map (Line . Prim . show) cs]
 
 
 -- | G-machine state for use in 'interpretGM'
