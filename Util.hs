@@ -3,6 +3,8 @@
 module Util where
 import Control.Monad.Error
 import Control.Monad.Identity
+import qualified Data.IntMap as IM
+import Data.Word
 
 
 
@@ -82,5 +84,20 @@ compileSB n ((SPrim s):xs)=s++compileSB n xs
 compileSB n (SSpace:xs)=" "++compileSB n xs
 compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
 compileSB n (SIndent:xs)=compileSB (n+1) xs
+
+
+
+-- | Moderately fast memory suitable for use in interpreters.
+data FlatMemory=FlatMemory (IM.IntMap Word8)
+
+mread :: FlatMemory -> Int -> Word8
+mread (FlatMemory m) i=maybe 0 id $ IM.lookup i m
+
+mwrite :: FlatMemory -> Int -> Word8 -> FlatMemory
+mwrite (FlatMemory m) i v=FlatMemory $ IM.insert i v m
+
+mmodify :: FlatMemory -> Int -> (Word8 -> Word8) -> FlatMemory
+mmodify fm i f=mwrite fm i (f $ mread fm i)
+
 
 

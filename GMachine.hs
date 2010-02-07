@@ -41,7 +41,7 @@ compile m
         t=M.fromList $ zip (M.keys m) [0..]
         
         -- code generation
-        lib=[origin,heapNew,stackNew]
+        lib=[origin,heapNew,heapNew_,heapRef,stackNew]
         cmd=map (compileCode t) $ nub $ concat $ M.elems m
         prc=map (uncurry compileCodeBlock) $ M.assocs m
         loop=[rootProc,setupMemory,mainLoop,eval,exec $ M.assocs t]
@@ -146,17 +146,17 @@ mainLoop=SProc "%mainLoop" "S0" []
     [SAM.Alloc "sc"
     ,Val (Register "sc") 1 -- any non-zero number will do
     ,While (Register "sc")
-        [Inline "eval" []
-        ,Inline "exec" []
+        [Inline "%eval" ["sc"]
+        ,Inline "%exec" ["sc"]
         ]
     ]
 
 eval :: SProc
 eval=SProc "%eval" "S0" ["sc"]
-    [Inline "#stack0" []
+    [Inline "#origin" []
     ,SAM.Alloc "addr"
     ,Move (Memory (-1)) [Register "addr"]
-    ,Inline "#stack0" []
+    ,Inline "#origin" []
     ,Bank "H0"
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"

@@ -1,4 +1,4 @@
--- | Brainfuck(BF2,BF1,BF) optimizer
+-- | Brainfuck: backend of /super-cool-graph-machine/. No serious work is done here.
 --
 -- Cost model of BF.
 --
@@ -15,39 +15,8 @@ import Util
 
 
 
-compileM :: BFM -> Process BFC
-compileM=undefined
-
-compileC :: BFC -> Process BF
-compileC=undefined
 
 
-
-
-
-
-
-
-
-
--- | Brainfuck with 
--- * multi-byte cell
--- * register
--- * independent memories
-data BFM=BFM deriving(Show)
-
-
--- | Brainfuck with constatnt.
-data BFC=BFC [BFCInst] deriving(Show)
-
-data BFCInst
-    =BFCPR Int
-    |BFCVR Int
-    |BFCVC
-    |BFCInput
-    |BFCOutput
-    |BFCLoop [BFCInst]
-    deriving(Show)
 
 -- | Original brainfuck.
 data BF=BF [BFInst]
