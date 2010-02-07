@@ -33,9 +33,10 @@ import Data.Array.IO
 import Data.Char
 import Data.List
 import Data.Maybe
+import Data.Ord
+import Data.Word
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Data.Word
 
 import Util
 import SCGR
@@ -45,22 +46,44 @@ compile :: SAM -> Process SCGR
 compile x=return undefined
 
 
--- | 
--- * Register dependency analysis
+-- | Apply this before 'compile'
 --
--- * Memory and register allocation
+-- * 'flatten': expand all inline calls
 --
--- * Access pattern optimization
---
--- * 
+-- * 'desugar': 'Clear' -> 'While' and 'Dispatch' -> 'While'
 simplify :: SAM -> Process SAM
 simplify s@(SAM _ procs)
-    |null errors = return $ flatten s
-    |otherwise   = throwError $ map f errors
+    |not $ null errors = throwError $ map f errors
+    |otherwise         = return $ desugar $ flatten s
     where
         f (pos,msg)=CompileErrorN "SAM->SAM" msg pos
         errors=snd $ runNMR $ mapM_ checkProc procs
 
+desugar :: SAM -> SAM
+desugar (SAM rs [SProc name [] ss])=SAM rs [SProc name [] ss']
+    where
+        ss'=[Alloc "_dispatch_t"]++concatMap desugarStmt ss++[Delete "_dispatch_t"]
+
+desugarStmt :: Stmt -> [Stmt]
+desugarStmt (Clear ptr)=[While ptr [Val ptr (-1)]]
+desugarStmt (Dispatch r cs)=concatMap desugarStmt $ expandDispatch r $ sortBy (comparing fst) cs
+desugarStmt (While ptr ss)=[While ptr $ concatMap desugarStmt ss]
+desugarStmt s=[s]
+
+-- | Case numbers must be sorted in ascending order.
+expandDispatch r []=[]
+expandDispatch r ((n0,e0):cs)=
+    [Clear (Register "_dispatch_t")
+    ,Val (Register r) (negate $ n0)
+    ,While (Register r) $
+        expandDispatch r (map (\(n,e)->(n-n0,e)) cs)++
+        [Clear (Register "_dispatch_t")
+        ,Val (Register "_dispatch_t") 1
+        ]
+    ,While (Register "_dispatch_t") $
+        e0++
+        [Clear (Register "_dispatch_t")]
+    ]
 
 
 
@@ -77,7 +100,7 @@ data Stmt
     |Alloc RegName
     |Delete RegName
     |Dispatch RegName [(Int,[Stmt])]
-    -- ^ in cases, RegName will be out of scope. This instruction is erratic in many ways...
+    -- ^ in case alts, given RegName will be out of scope. This instruction is erratic in many ways...
     --  Get rid of it ASAP! (1. Come up with new instruction, 2. expand to while on the fly)
     |Inline ProcName [RegName]
     |Clear Pointer -- ^ treat as a syntax sugar of Move p []
@@ -204,26 +227,20 @@ procName (SProc x _ _)=x
 
 
 
+-- | 'NRM' instance for use in 'checkProc'
 type NMRE a=NMR String String a
 
 
 -- | Find static erros in a 'SProc'.
 -- 
+-- What's being done here is usual variable scope analysis. But the data dependecy graph will be a
+-- DAG, not tree.
+--
 -- * unknown registers
 --
 -- * unmatched register and bank in 'While' and 'Dispatch'
 --
 -- * modification of flag register in 'Dispatch'
---
--- All of this is handled via scope analysis, but done differently from conventional techniques.
---
--- Rather than tracking "bound variables", see each statement as BV-set transformer.
---
--- * Alloc makes adding transformer
---
--- * Delete makes removing transformer
---
--- * Transformer merge (sequential,parallel) is defined, and whole proc must be id.
 checkProc :: SProc -> NMRE ()
 checkProc (SProc name args ss)=within ("proc "++name) $ do
     let rs=S.fromList args

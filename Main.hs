@@ -12,7 +12,6 @@
 -- See the source of 'help' for detailed description\/specification of features.
 module Main where
 import Control.Monad
-import Language.Haskell.Pretty
 import System.Environment
 import System.FilePath.Posix
 
@@ -21,6 +20,7 @@ import qualified Front
 import qualified Core
 import qualified GMachine
 import qualified SAM
+import qualified SCGR
 import qualified Brainfuck
 
 
@@ -121,16 +121,15 @@ help=unlines $
     ,""
     ,"command:"
     ,"  --version: show version"
-    ,"  --run <module> <option>*: show <module>"
+    ,"  --run <module> <option>*: interpret <module>"
     ,"  --make <module> <option>*: compile <module>"
     ,""
     ,"option:"
-   -- ,"  --verbose: show internal data (for hs2bf devloppers)"
     ,"  -o <file> : output path"
     ,"  -O : enable optimization"
     ,"  -Sc  : to Core code"
     ,"  -Sm  : to GMachine"
-    ,"  -Sbn : to BF(n)"
+    ,"  -Sb : to BF"
     ,"  --bf-addr n : use n byte for pointer arithmetic"
     ,"  --debug : include detailed error message (this will make the program a LOT larger)"
     ,""
