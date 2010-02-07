@@ -110,7 +110,7 @@ pprintData f (CrData name xs cons)=Line $ U.Pack
 
 pprintProc f (CrProc n as e)=Line $ U.Pack
     [Line $ U.Pack [Span $ map (pprintAName f) $ n:as,Prim "="]
-    ,Indent $ pprintAExpr f e]
+    ,Indent $ Line $ pprintAExpr f e]
 
 pprintAExpr f (CrA ea e)=pprintExpr f e
 pprintAName f (CrA na n)=Prim $ f na n
