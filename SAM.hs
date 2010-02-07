@@ -54,8 +54,14 @@ compile x=return undefined
 -- * Access pattern optimization
 --
 -- * 
-simplify :: SAM -> SAM
-simplify=undefined
+simplify :: SAM -> Process SAM
+simplify s@(SAM _ procs)
+    |null errors = return $ flatten s
+    |otherwise   = throwError $ map f errors
+    where
+        f (pos,msg)=CompileErrorN "SAM->SAM" msg pos
+        errors=snd $ runNMR $ mapM_ checkProc procs
+
 
 
 
@@ -71,7 +77,9 @@ data Stmt
     =Locate Int -- ^ ptr+=n
     |Alloc RegName
     |Delete RegName
-    |Dispatch Pointer [(Int,[Stmt])]
+    |Dispatch RegName [(Int,[Stmt])]
+    -- ^ in cases, RegName will be out of scope. This instruction is erratic in many ways...
+    --  Get rid of it ASAP! (1. Come up with new instruction, 2. expand to while on the fly)
     |Inline ProcName [RegName]
     |Clear Pointer -- ^ treat as a syntax sugar of Move p []
     |Move Pointer [Pointer]
@@ -114,9 +122,9 @@ pprintStmts :: [Stmt] -> StrBlock
 pprintStmts=SBlock . intersperse SNewline . map pprintStmt
 
 pprintStmt :: Stmt -> StrBlock
-pprintStmt (Dispatch ptr cs)=SBlock [t,b]
+pprintStmt (Dispatch n cs)=SBlock [t,b]
     where
-        t=SBlock [SPrim "dispatch",SSpace,SPrim $ show ptr]
+        t=SBlock [SPrim "dispatch",SSpace,SPrim n]
         b=SBlock $ [SIndent,SNewline]++intersperse SNewline (map pprintCase cs)
 pprintStmt (While ptr ss)=SBlock [t,b]
     where
@@ -177,14 +185,17 @@ expandProc rs_parent (SProc name rs_child ss)
 -- | Apply register name transformation. Only valid under correct scoping.
 replaceStmt :: M.Map RegName RegName -> Stmt -> Stmt
 replaceStmt m (While ptr ss)=While (replacePtr m ptr) $ map (replaceStmt m) ss
-replaceStmt m (Dispatch ptr cs)=Dispatch (replacePtr m ptr) $ map (second (map $ replaceStmt m)) cs
+replaceStmt m (Dispatch n cs)=Dispatch (replaceReg m n) $ map (second (map $ replaceStmt m)) cs
 replaceStmt m (Val p n)=Val (replacePtr m p) n
 replaceStmt m (Alloc n)=Alloc $ M.findWithDefault n n m
 replaceStmt m (Delete n)=Delete $ M.findWithDefault n n m
 replaceStmt m (Clear p)=Clear $ replacePtr m p
 replaceStmt m (Move p ps)=Move (replacePtr m p) (map (replacePtr m) ps)
-replaceStmt m (Inline n ss)=Inline n $ map (\x->M.findWithDefault x x m) ss
+replaceStmt m (Inline n ss)=Inline n $ map (replaceReg m) ss
 replaceStmt _ s=s
+
+replaceReg :: M.Map RegName RegName -> RegName -> RegName
+replaceReg m x=M.findWithDefault x x m
 
 replacePtr :: M.Map RegName RegName -> Pointer -> Pointer
 replacePtr m (Register x)=Register $ M.findWithDefault x x m
@@ -192,6 +203,12 @@ replacePtr _ p=p
 
 procName :: SProc -> String
 procName (SProc x _ _)=x
+
+
+
+
+
+type NMRE a=NMR String String a
 
 
 -- | Find static erros in a 'SProc'.
@@ -202,24 +219,58 @@ procName (SProc x _ _)=x
 --
 -- * modification of flag register in 'Dispatch'
 --
--- All of this is handled via 
-{-
-checkProc :: SProc -> [CompileError]
-checkProc (SProc name args ss)
-    |length args/=length (nub args) = [CompileError "SAM" ("proc "++name) "duplicate arguments"
-    |S.Set
+-- All of this is handled via scope analysis, but done differently from conventional techniques.
+--
+-- Rather than tracking "bound variables", see each statement as BV-set transformer.
+--
+-- * Alloc makes adding transformer
+--
+-- * Delete makes removing transformer
+--
+-- * Transformer merge (sequential,parallel) is defined, and whole proc must be id.
+checkProc :: SProc -> NMRE ()
+checkProc (SProc name args ss)=within ("proc "++name) $ do
+    let rs=S.fromList args
+    when (S.size rs/=length args) $ report "duplicate arguments"
+    rs'<-checkStmt ss rs
+    when (rs/=rs') $ report $ "leaking registers: "++unwords (S.toList $ rs' S.\\ rs)
 
-checkStmt :: Stmt -> S.Set RegName -> Either (String,String) (S.Set RegName)
-checkStmt (While ptr ss) (rs,r)
-    |
+
+checkStmt :: [Stmt] -> S.Set RegName -> NMRE (S.Set RegName)
+checkStmt [] rs=return rs
+checkStmt ((While ptr ss):xs) rs=do
+    within "while flag" $ checkPointer ptr rs
+    rs'<-within "while body" $ checkStmt ss rs
+    when (rs/=rs') $ within "while" $ report $ "leaking registers: "++unwords (S.toList $ rs' S.\\ rs)
+    checkStmt xs rs
+checkStmt ((Dispatch n cs):xs) rs=do
+    unless (S.member n rs) $ within "dispatch header" $ report $ "unknown register:"++show n
+    let rsBody=S.delete n rs
+    rss<-mapM (\(n,ss)->within ("dispatch body "++show n) $ checkStmt ss rsBody) cs
+    let probs=filter ((/=rsBody) . snd) $ zip (map fst cs) rss
+    mapM_ (\(n,rsB)->within ("end of dispatch body "++show n) $ report $ "leaking registers:"++unwords (S.toList $ rsB S.\\ rsBody)) probs 
+    checkStmt xs rs
+checkStmt ((Alloc n):xs) rs=do
+    when (S.member n rs) $ report $ "duplicated allocation of "++n
+    checkStmt xs $ S.insert n rs
+checkStmt ((Delete n):xs) rs=do
+    unless (S.member n rs) $ report $ "deleting unallocated register "++n
+    checkStmt xs $ S.delete n rs
+checkStmt ((Move p ps):xs) rs=mapM_ (\x->within "move" $ checkPointer x rs) (p:ps) >> checkStmt xs rs
+checkStmt ((Val p _):xs) rs=within "val" (checkPointer p rs) >> checkStmt xs rs
+checkStmt ((Clear p):xs) rs=within "clear" (checkPointer p rs) >> checkStmt xs rs
+checkStmt ((Inline name ns):xs) rs=do
+    let s=S.fromList ns
+    unless (s `S.isSubsetOf` rs) $ within ("inline "++name) $ report $ "unknown registers: " ++unwords (S.toList $s S.\\ rs)
+    checkStmt xs rs
+checkStmt (_:xs) rs=checkStmt xs rs
+
+
+checkPointer :: Pointer -> S.Set RegName -> NMRE ()
+checkPointer (Register x) rs=unless (S.member x rs) $ within "pointer" $ report $ "unknown register: "++x
+checkPointer _ rs=return ()
 
 
 
-
-checkPointer :: Pointer -> S.Set RegName -> Bool
-checkPointer (Register x) (rs,_)=S.member x rs
-checkPointer _=True
-
--}
 
 

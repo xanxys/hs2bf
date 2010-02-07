@@ -53,7 +53,6 @@ compile m
         hs=["H0"]
 
 
-
 compileCodeBlock :: String -> [GMCode] -> SProc
 compileCodeBlock name cs=SProc ("!"++name) [] $ map (flip Inline [] . compileName) cs
 
@@ -113,6 +112,7 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,SAM.Alloc "temp"
         ,Move (Memory "S0" $ negate $ n+1) [Memory "S0" 0,Register "temp"]
         ,Move (Register "temp") [Memory "S0" $ negate $ n+1]
+        ,Delete "temp"
         ]
 
 appTag=0
@@ -162,7 +162,7 @@ eval=SProc "%eval" ["sc"]
     ,SAM.Alloc "temp"
     ,Move (Memory "H0" 1) [Register "temp"]
     ,Move (Register "temp") [Memory "H0" 1,Register "tag"]
-    ,Dispatch (Register "tag")
+    ,Dispatch "tag"
         [(scTag,
             [Move (Memory "H0" 2) [Register "temp"]
             ,Move (Register "temp") [Memory "H0" 2,Register "sc"]
@@ -171,11 +171,12 @@ eval=SProc "%eval" ["sc"]
             [Move (Memory "H0" 2) [Register "temp"]
             ,SAM.Alloc "stag"
             ,Move (Register "temp") [Memory "H0" 2,Register "stag"]
-            ,Dispatch (Register "stag")
+            ,Dispatch "stag"
                 [(2,[Clear (Register "sc")])] -- 0 :input 1:output 2:halt
             ,Delete "stag"
             ])
         ]
+    ,Delete "tag"
     ,Delete "temp"
     ]
 
@@ -186,7 +187,7 @@ exec xs=SProc "%exec" ["sc"]
     ,Move (Register "sc") [Register "temp",Register "temp2"]
     ,Move (Register "temp") [Register "sc"]
     ,Delete "temp"
-    ,Dispatch (Register "temp2") $ map f xs
+    ,Dispatch "temp2" $ map f xs
     ,Delete "temp2"
     ]
     where f (str,n)=(n,[Inline ("!"++str) []])

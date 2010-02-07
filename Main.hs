@@ -33,9 +33,9 @@ data Command
     |Compile Option String
 
 data Language
-    =LangCore
+    =LangCore String
     |LangGMachine
-    |LangSAM
+    |LangSAM String
     |LangBF
     deriving(Show,Eq,Ord)
 
@@ -65,11 +65,9 @@ parseOption :: [String] -> Option
 parseOption []=Option{optimize=False,bfAddrSpace=2,verbose=True,debug=False,tolang=LangBF}
 parseOption (term:xs)=case term of
     "-O"  -> o{optimize=True}
-    "-Sc" -> o{tolang=LangCore}
+    '-':'S':'c':xs -> o{tolang=LangCore xs}
     "-Sg" -> o{tolang=LangGMachine}
-    "-Ss" -> o{tolang=LangSAM}
---    "-Sm" -> o{tolang=LangBFM}
---    "-Sk" -> o{tolang=LangBFC}
+    '-':'S':'s':xs -> o{tolang=LangSAM xs}
     "-Sb" -> o{tolang=LangBF}
     _ -> error $ "unknown option:"++term
     where o=parseOption xs
@@ -85,13 +83,11 @@ execCommand (Interpret opt from)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
     case tolang opt of
-        LangCore -> error "Interpretation of Core is not supported"
+        LangCore _ -> error "Interpretation of Core is not supported"
         LangGMachine -> evalWith GMachine.interpretGM $ runProcess $ xs >>= Front.compile >>= Core.compile
-        LangSAM -> error "Interpretation of SAM is not supported"
---        LangBFM -> error "Interpretation of BFM is not supported"
---        LangBFC -> error "Interpretation of BFC is not supported"
+        LangSAM _ -> error "Interpretation of SAM is not supported"
         LangBF -> evalWith Brainfuck.interpretBF $ runProcess $ xs >>= Front.compile >>= Core.compile >>=
-                            GMachine.compile >>= SAM.compile
+                            GMachine.compile >>= SAM.simplify >>= SAM.compile
     where
         evalWith :: (a->IO ()) -> Either [CompileError] a -> IO ()
         evalWith f=either (putStr . unlines . map show) f
@@ -101,17 +97,15 @@ execCommand (Compile opt from)=do
     xs<-Front.collectModules env mod
     let core=xs >>= Front.compile
         gm  =core >>= Core.compile
-        sam =gm   >>= GMachine.compile >>= return . SAM.flatten
---        bfm =sam  >>= SAM.compile
---        bfc =bfm  >>= Brainfuck.compileM
-        bf  =sam  >>= SAM.compile -- Brainfuck.compileC
+        sam =gm   >>= GMachine.compile
+        sam'=sam  >>= SAM.simplify
+        bf  =sam' >>= SAM.compile
     case tolang opt of
-        LangCore     -> capProcess core Core.pprintCoreP
-        LangGMachine -> capProcess gm  GMachine.pprintGM
-        LangSAM      -> capProcess sam SAM.pprint
---        LangBFM      -> capProcess bfm show
---        LangBFC      -> capProcess bfc show
-        LangBF       -> capProcess bf  show
+        LangCore _   -> capProcess core Core.pprintCoreP
+        LangGMachine -> capProcess gm GMachine.pprintGM
+        LangSAM ""   -> capProcess sam SAM.pprint
+        LangSAM "f"  -> capProcess sam' SAM.pprint
+        LangBF       -> capProcess bf show
     where
         capProcess pr f=outputWith f $ runProcess pr
         outputWith :: (a->String) -> Either [CompileError] a -> IO ()

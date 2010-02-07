@@ -14,8 +14,7 @@ ghc --make Main -O -o $PROG;
 and compile Core -Sc;
 and compile GMachine -Sg;
 and compile SAM -Ss;
-and compile BFM -Sm;
-and compile BFC -Sk;
+and compile SAM-flatten -Ssf;
 and compile BF -Sb
 
 
