@@ -1,7 +1,19 @@
 {-# LANGUAGE FlexibleInstances #-}
 -- | Modular error reporting and common functions
-module Util where
+--
+-- note for future me: Arrow vs. Monad
+--    Suppose each process can return either error or result.
+--   Parallel execution of such processes can be written as:
+--    (a -> m b) -> [a] -> m [b]  : Monadic form
+--    w a b -> w [a] [b] : Arrow form
+-- 
+-- How to decide on one?
+--    If you can write [m b] -> m [b] , then use Monad.
+--   Otherwise use Arrow.
+module Util(module Util,throwError) where
+import Control.Arrow
 import Control.Monad.Error
+import Control.Monad.State
 import Control.Monad.Identity
 import qualified Data.IntMap as IM
 import Data.Word
@@ -18,31 +30,78 @@ runProcess=runIdentity . runErrorT
 
 
 
--- | a compile error
+-- | A detailed compile error
 -- 
--- * corresponding part of program (ex.: frontend, core)
+-- * 'CompileError' is used in early stages where filename and line number is known
 --
--- * position (inline)
---
--- * error descriptipn(multiple line)
-data CompileError=CompileError String String String
+-- * 'CompileErrorN' is used in later stages where only non-numerical position is available
+data CompileError
+    =CompileError String String String -- ^ e.g. CompileError "Haskell->Core" "Main.hs:12" "parse error"
+    |CompileErrorN String String [String] -- ^ e.g. CompileErrorN "SAM->SAM" "unknown register x" ["while","proc foo"]
 
 instance Show CompileError where
-    show (CompileError m p d)=m++":"++p++"\n"++d
+    show (CompileError m p d)=m++":"++p++":\n"++d
+    show (CompileErrorN m d ps)=m++":\n"++d++"\n"++concatMap (\x->"in "++x++"\n") ps
 
 instance Error [CompileError] where
     noMsg=[]
 
 
--- note for future me: Arrow vs. Monad
---    Suppose each process can return either error or result.
---   Parallel execution of such processes can be written as:
---    (a -> m b) -> [a] -> m [b]  : Monadic form
---    w a b -> w [a] [b] : Arrow form
--- 
--- How to decide on one?
---    If you can write [m b] -> m [b] , then use Monad.
---   Otherwise use Arrow.
+-- | Nested structure multiple reporter monad
+type NMR p e a=State ([p],[([p],e)]) a
+
+report :: e -> NMR p e ()
+report e=do
+    (pos,es)<-get
+    put (pos,(pos,e):es)
+
+within :: p -> NMR p e a -> NMR p e a
+within x f=do
+    modify (first (x:))
+    r<-f
+    modify (first tail)
+    return r
+
+runNMR :: NMR p e a -> (a,[([p],e)])
+runNMR=second snd . flip runState ([],[])
+
+
+
+
+
+-- | Nested string with indent for general pretty printing
+data StrBlock
+    =SBlock [StrBlock]
+    |SPrim String
+    |SSpace
+    |SNewline
+    |SIndent
+
+-- | Render ['StrBlock'] with an inital indentation
+compileSB :: Int -> [StrBlock] -> String
+compileSB _ []=""
+compileSB n ((SBlock ss):xs)=compileSB n ss++compileSB n xs
+compileSB n ((SPrim s):xs)=s++compileSB n xs
+compileSB n (SSpace:xs)=" "++compileSB n xs
+compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
+compileSB n (SIndent:xs)=compileSB (n+1) xs
+
+
+
+
+-- | Moderately fast memory suitable for use in interpreters.
+data FlatMemory=FlatMemory (IM.IntMap Word8)
+
+mread :: FlatMemory -> Int -> Word8
+mread (FlatMemory m) i=maybe 0 id $ IM.lookup i m
+
+mwrite :: FlatMemory -> Int -> Word8 -> FlatMemory
+mwrite (FlatMemory m) i v=FlatMemory $ IM.insert i v m
+
+mmodify :: FlatMemory -> Int -> (Word8 -> Word8) -> FlatMemory
+mmodify fm i f=mwrite fm i (f $ mread fm i)
+
+
 
 
 -- | a b c ... z aa ab ac ... az ba ...
@@ -65,39 +124,4 @@ stringInc (x:xs)=succ x:xs
 change1 :: [a] -> [a] -> [[a]]
 change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
 change1 _ _=[]
-
-
--- | Nested string with indent for general pretty printing
-data StrBlock
-    =SBlock [StrBlock]
-    |SPrim String
-    |SSpace
-    |SNewline
-    |SIndent
-
-
--- | Render ['StrBlock'] with an inital indentation
-compileSB :: Int -> [StrBlock] -> String
-compileSB _ []=""
-compileSB n ((SBlock ss):xs)=compileSB n ss++compileSB n xs
-compileSB n ((SPrim s):xs)=s++compileSB n xs
-compileSB n (SSpace:xs)=" "++compileSB n xs
-compileSB n (SNewline:xs)="\n"++replicate (n*4) ' '++compileSB n xs
-compileSB n (SIndent:xs)=compileSB (n+1) xs
-
-
-
--- | Moderately fast memory suitable for use in interpreters.
-data FlatMemory=FlatMemory (IM.IntMap Word8)
-
-mread :: FlatMemory -> Int -> Word8
-mread (FlatMemory m) i=maybe 0 id $ IM.lookup i m
-
-mwrite :: FlatMemory -> Int -> Word8 -> FlatMemory
-mwrite (FlatMemory m) i v=FlatMemory $ IM.insert i v m
-
-mmodify :: FlatMemory -> Int -> (Word8 -> Word8) -> FlatMemory
-mmodify fm i f=mwrite fm i (f $ mread fm i)
-
-
 
