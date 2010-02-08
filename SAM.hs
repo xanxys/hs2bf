@@ -29,8 +29,9 @@ module SAM where
 import Control.Arrow
 import Control.Monad
 import Control.Monad.State
-import Data.Array.IO
 import Data.Char
+import Data.Either
+import Data.Graph
 import Data.List
 import Data.Maybe
 import Data.Ord
@@ -46,26 +47,27 @@ compile :: SAM -> Process SCGR
 compile x=return undefined
 
 
--- | Apply this before 'compile'
+foldMemory :: SAM -> Process SAM
+foldMemory (SAM rs procs)=return $ SAM rs procs
+
+-- | Apply this before 'SAM.compile'
 --
 -- * 'flatten': expand all inline calls
 --
--- * 'desugar': 'Clear' -> 'While' and 'Dispatch' -> 'While'
+-- * 'desugar': 'Dispatch' -> 'While'
+--     (don't expand 'Clear' or 'Move' here, since they are good for later optimization)
 simplify :: SAM -> Process SAM
-simplify s@(SAM _ procs)
-    |not $ null errors = throwError $ map f errors
-    |otherwise         = return $ desugar $ flatten s
-    where
-        f (pos,msg)=CompileErrorN "SAM->SAM" msg pos
-        errors=snd $ runNMR $ mapM_ checkProc procs
+simplify s=
+    checkSAM "SAM" s >>= return . flatten "^" >>=
+    checkSAM "SAM:flattened" >>= return . desugar >>=
+    checkSAM "SAM:desugared"
 
 desugar :: SAM -> SAM
 desugar (SAM rs [SProc name [] ss])=SAM rs [SProc name [] ss']
     where
-        ss'=[Alloc "_dispatch_t"]++concatMap desugarStmt ss++[Delete "_dispatch_t"]
+        ss'=[Alloc "_dt"]++concatMap desugarStmt ss++[Delete "_dt"]
 
 desugarStmt :: Stmt -> [Stmt]
-desugarStmt (Clear ptr)=[While ptr [Val ptr (-1)]]
 desugarStmt (Dispatch r cs)=concatMap desugarStmt $ expandDispatch r $ sortBy (comparing fst) cs
 desugarStmt (While ptr ss)=[While ptr $ concatMap desugarStmt ss]
 desugarStmt s=[s]
@@ -73,16 +75,16 @@ desugarStmt s=[s]
 -- | Case numbers must be sorted in ascending order.
 expandDispatch r []=[]
 expandDispatch r ((n0,e0):cs)=
-    [Clear (Register "_dispatch_t")
+    [Clear (Register "_dt")
     ,Val (Register r) (negate $ n0)
     ,While (Register r) $
         expandDispatch r (map (\(n,e)->(n-n0,e)) cs)++
-        [Clear (Register "_dispatch_t")
-        ,Val (Register "_dispatch_t") 1
+        [Clear (Register "_dt")
+        ,Val (Register "_dt") 1
         ]
-    ,While (Register "_dispatch_t") $
+    ,While (Register "_dt") $
         e0++
-        [Clear (Register "_dispatch_t")]
+        [Clear (Register "_dt")]
     ]
 
 
@@ -168,60 +170,66 @@ data SAMInternal=SAMInternal Int [(String,FlatMemory)] [(String,Word8)]
 type SAMS=State SAMInternal
 
 
--- | TODO: use faster algorithm
-flatten :: SAM -> SAM
-flatten (SAM rs ps)=SAM rs [flattenProc m (m M.! "^")]
+-- | Flatten procedures with given root.
+flatten :: ProcName -> SAM -> SAM
+flatten root (SAM rs ps)
+    |not $ null cycles = error $ "flatten: dependency cycles:\n"++unlines (map unwords cycles)
+    |otherwise         = SAM rs [m2p root $ foldl expandProc (ps2m ps) vs]
     where
-        m=M.fromList $ zip (map procName ps) ps
+        (cycles,vs)=partitionEithers $ map f $ stronglyConnComp $ map procNode ps
+        f (AcyclicSCC x)=Right x
+        f (CyclicSCC xs)=Left xs
+    
+        ps2m=M.fromList . map (\(SProc name args ss)->(name,(args,ss)))
+        m2p r m=uncurry (SProc r) $ m M.! r
 
 
-flattenProc :: M.Map ProcName SProc -> SProc -> SProc
-flattenProc m proc@(SProc n rs ss)
-    |any expandable ss = flattenProc m $ SProc n rs $ concatMap f ss
-    |otherwise         = proc
+
+-- | Construct a node for procedure dependecy graph
+procNode :: SProc -> (ProcName,ProcName,[ProcName])
+procNode (SProc n args ss)=(n,n,S.toList $ S.unions $ map stmtDep ss)
+
+-- | Collect 'Inline'd procedures from 'Stmt'
+stmtDep :: Stmt -> S.Set ProcName
+stmtDep (While _ ss)=S.unions $ map stmtDep ss
+stmtDep (Dispatch _ cs)=S.unions $ map stmtDep $ concatMap snd cs
+stmtDep (Inline n _)=S.singleton n
+stmtDep _=S.empty
+
+-- | Expand the given proc in the map non-recursively.
+expandProc :: M.Map ProcName ([RegName],[Stmt]) -> ProcName -> M.Map ProcName ([RegName],[Stmt])
+expandProc m r=M.adjust (second $ expandStmts m) r m
+
+expandStmts :: M.Map ProcName ([RegName],[Stmt]) -> [Stmt] -> [Stmt]
+expandStmts m=concatMap (expandStmt m)
+
+expandStmt :: M.Map ProcName ([RegName],[Stmt]) -> Stmt -> [Stmt]
+expandStmt m (Inline n rsP)=map (replaceStmt f) ss
     where
-        f (Inline n ss)=expandProc ss $ M.findWithDefault (error $ "flattenProc:unknown proc "++n) n m
-        f (While p ss)=[While p $ concatMap f ss]
-        f (Dispatch p cs)=[Dispatch p $ map (second $ concatMap f) cs]
-        f s=[s]
-
-        expandable (Inline _ _)=True
-        expandable (While _ ss)=any expandable ss
-        expandable (Dispatch _ cs)=any (any expandable . snd) cs
-        expandable _=False
+        (rsC,ss)=M.findWithDefault (error $ "flattenProc:unknown proc "++n) n m
+        f reg=case lookup reg $ zip rsC rsP of
+                  Just rsp -> rsp
+                  Nothing  -> if elem reg rsP then n++"/"++reg else reg
+expandStmt m (While p ss)=[While p $ expandStmts m ss]
+expandStmt m (Dispatch p cs)=[Dispatch p $ map (second $ expandStmts m) cs]
+expandStmt _ s=[s]
 
 
-
-expandProc :: [RegName] -> SProc -> [Stmt]
-expandProc rs_parent (SProc name rs_child ss)
-    |length rs_parent/=length rs_child = error $ "expandProc: arity error in "++name
-    |otherwise = map (replaceStmt t) ss
-    where
-        pairs=filter (uncurry (/=)) $ zip rs_child rs_parent
-        t=M.fromList $ concatMap (\(c,p)->[(c,p),(p,c++"/")]) pairs
-
-
--- | Apply register name transformation. Only valid under correct scoping.
-replaceStmt :: M.Map RegName RegName -> Stmt -> Stmt
-replaceStmt m (While ptr ss)=While (replacePtr m ptr) $ map (replaceStmt m) ss
-replaceStmt m (Dispatch n cs)=Dispatch (replaceReg m n) $ map (second (map $ replaceStmt m)) cs
-replaceStmt m (Val p n)=Val (replacePtr m p) n
-replaceStmt m (Alloc n)=Alloc $ M.findWithDefault n n m
-replaceStmt m (Delete n)=Delete $ M.findWithDefault n n m
-replaceStmt m (Clear p)=Clear $ replacePtr m p
-replaceStmt m (Move p ps)=Move (replacePtr m p) (map (replacePtr m) ps)
-replaceStmt m (Inline n ss)=Inline n $ map (replaceReg m) ss
+-- | Apply register name transformation.
+replaceStmt :: (RegName -> RegName) -> Stmt -> Stmt
+replaceStmt f (While ptr ss)=While (replacePtr f ptr) $ map (replaceStmt f) ss
+replaceStmt f (Dispatch n cs)=Dispatch (f n) $ map (second (map $ replaceStmt f)) cs
+replaceStmt f (Val p n)=Val (replacePtr f p) n
+replaceStmt f (Alloc n)=Alloc $ f n
+replaceStmt f (Delete n)=Delete $ f n
+replaceStmt f (Clear p)=Clear $ replacePtr f p
+replaceStmt f (Move p ps)=Move (replacePtr f p) (map (replacePtr f) ps)
+replaceStmt f (Inline n ss)=error "replaceStmt: Inline: re-check expansion order"
 replaceStmt _ s=s
 
-replaceReg :: M.Map RegName RegName -> RegName -> RegName
-replaceReg m x=M.findWithDefault x x m
-
-replacePtr :: M.Map RegName RegName -> Pointer -> Pointer
-replacePtr m (Register x)=Register $ M.findWithDefault x x m
+replacePtr :: (RegName -> RegName) -> Pointer -> Pointer
+replacePtr f (Register x)=Register $ f x
 replacePtr _ p=p
-
-procName :: SProc -> String
-procName (SProc x _ _)=x
 
 
 
@@ -229,6 +237,14 @@ procName (SProc x _ _)=x
 
 -- | 'NRM' instance for use in 'checkProc'
 type NMRE a=NMR String String a
+
+-- | Just a wrapper of 'checkProc' for 'SAM'. No additional checks.
+checkSAM :: String -> SAM -> Process SAM
+checkSAM loc s@(SAM x procs)
+    |null errors = return s
+    |otherwise   = throwError errors
+    where
+        errors=map (\(pos,msg)->CompileErrorN loc msg pos) $ snd $ runNMR $ mapM_ checkProc procs
 
 
 -- | Find static erros in a 'SProc'.
@@ -238,7 +254,11 @@ type NMRE a=NMR String String a
 --
 -- * unknown registers
 --
--- * unmatched register and bank in 'While' and 'Dispatch'
+-- * unmatched register in 'While' and 'Dispatch'
+--
+-- TODO:
+--
+-- * 'Alloc' or 'Delete' of argument registers
 --
 -- * modification of flag register in 'Dispatch'
 checkProc :: SProc -> NMRE ()
@@ -258,10 +278,8 @@ checkStmt ((While ptr ss):xs) rs=do
     checkStmt xs rs
 checkStmt ((Dispatch n cs):xs) rs=do
     unless (S.member n rs) $ within "dispatch header" $ report $ "unknown register:"++show n
-    let rsBody=S.delete n rs
-    rss<-mapM (\(n,ss)->within ("dispatch body "++show n) $ checkStmt ss rsBody) cs
-    let probs=filter ((/=rsBody) . snd) $ zip (map fst cs) rss
-    mapM_ (\(n,rsB)->within ("end of dispatch body "++show n) $ report $ "leaking registers:"++unwords (S.toList $ rsB S.\\ rsBody)) probs 
+    let integrity rsB=when (rsB/=rs) $ report $ "leaking registers:"++unwords (S.toList $ rsB S.\\ rs)
+    forM_ cs (\(n,ss)->within ("dispatch clause "++show n) $ checkStmt ss rs >>= integrity)
     checkStmt xs rs
 checkStmt ((Alloc n):xs) rs=do
     when (S.member n rs) $ report $ "duplicated allocation of "++n

@@ -129,3 +129,8 @@ change1 :: [a] -> [a] -> [[a]]
 change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
 change1 _ _=[]
 
+
+fst3 (x,_,_)=x
+snd3 (_,y,_)=y
+thr3 (_,_,z)=z
+
