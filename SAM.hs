@@ -209,7 +209,7 @@ expandStmt m (Inline n rsP)=map (replaceStmt f) ss
         (rsC,ss)=M.findWithDefault (error $ "flattenProc:unknown proc "++n) n m
         f reg=case lookup reg $ zip rsC rsP of
                   Just rsp -> rsp
-                  Nothing  -> if elem reg rsP then n++"/"++reg else reg
+                  Nothing  -> n++"/"++reg
 expandStmt m (While p ss)=[While p $ expandStmts m ss]
 expandStmt m (Dispatch p cs)=[Dispatch p $ map (second $ expandStmts m) cs]
 expandStmt _ s=[s]
