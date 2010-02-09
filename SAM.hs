@@ -428,6 +428,7 @@ type SAMST=StateT SAMInternal
 enterProc :: ProcName -> [(ProcName,RegName)] -> SAMST IO ()
 enterProc name args=do
     liftIO $ putStrLn $ "entering:"++name
+    dumpRegisters
     dumpMemory
     
     ptb<-liftM procTable get
@@ -447,7 +448,7 @@ dumpMemory=do
     p<-liftM pointer get
     let maxAddr=max 0 $ maximum (map msize $ M.elems t)-1
         ss=map (\x->dumpMemoryBetween p t (x*w,(x+1)*w-1)) [0..maxAddr `div` w]
-    liftIO $ mapM_ putStrLn ss
+    liftIO $ putStr $ unlines ss
     where w=16
 
 dumpMemoryBetween :: Int -> MemTable -> (Int,Int) -> String
@@ -458,6 +459,20 @@ dumpMemoryBetween p t (a0,a1)=unlines $ map dumpKey ks
         dumpKey k=printf ("%"++show head++"s|") k++dump (t M.! k)
         dump fm=unwords $ map (\x->showAddr x $ mread fm x) [a0..a1]
         showAddr a v=(if a==p then ">" else " ")++(showHex v "")
+
+dumpRegisters :: SAMST IO ()
+dumpRegisters=do
+    r<-liftM regTable get
+    let ss=map (uncurry dumpRegisterP) $ M.assocs r
+    liftIO $ putStr $ concat ss
+
+dumpRegisterP :: ProcName -> (M.Map RegName Word8,M.Map RegName (ProcName,RegName)) -> String
+dumpRegisterP proc (m0,m1)
+    |null rs = ""
+    |otherwise = unlines $ ("in "++proc++":"):rs
+    where
+        rs=(map (\(n,v)->"  "++n++": "++showHex v "") $ M.assocs m0)++
+           (map (\(n,a)->"  "++n++" -> "++show a) $ M.assocs m0)
 
     
     
