@@ -111,7 +111,10 @@ mwrite (FlatMemory m) i v=FlatMemory $ IM.insert i v m
 mmodify :: FlatMemory -> Int -> (Word8 -> Word8) -> FlatMemory
 mmodify fm i f=mwrite fm i (f $ mread fm i)
 
-
+msize :: FlatMemory -> Int
+msize (FlatMemory m)=case IM.maxViewWithKey m of
+    Nothing -> 0
+    Just ((k,v),m') -> if v/=0 then k+1 else msize $ FlatMemory m'
 
 
 -- | a b c ... z aa ab ac ... az ba ...

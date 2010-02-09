@@ -179,7 +179,18 @@ eval=SProc "%eval" ["sc"]
             ,SAM.Alloc "stag"
             ,Move (Register "temp") [Memory "H0" 2,Register "stag"]
             ,Dispatch "stag"
-                [(2,[Clear (Register "sc")])] -- 0 :input 1:output 2:halt
+                [(0, -- input f
+                    [])
+                ,(1, -- output x k
+                    [])
+                ,(2, -- halt
+                    [Clear (Register "sc")
+                    ,Inline "#origin" []
+                    ,Locate 1
+                    ,Inline "#stackNew" []
+                    ,Clear (Memory "S0" (-1))
+                    ])
+                ]
             ,Delete "stag"
             ])
         ]

@@ -38,6 +38,8 @@ import Data.Ord
 import Data.Word
 import qualified Data.Map as M
 import qualified Data.Set as S
+import Numeric
+import Text.Printf
 
 import Util
 import SCGR
@@ -425,6 +427,9 @@ type SAMST=StateT SAMInternal
 
 enterProc :: ProcName -> [(ProcName,RegName)] -> SAMST IO ()
 enterProc name args=do
+    liftIO $ putStrLn $ "entering:"++name
+    dumpMemory
+    
     ptb<-liftM procTable get
     rtb<-liftM regTable get
     let SProc _ rs ss=M.findWithDefault (error $ "SAMi: procedure not found: "++name) name ptb
@@ -435,6 +440,26 @@ enterProc name args=do
     modify (\x->x{regTable=rtb'})
     mapM_ (execStmt name) ss
     modify (\x->x{regTable=M.delete name $ regTable x})
+
+dumpMemory :: SAMST IO ()
+dumpMemory=do
+    t<-liftM memTable get
+    p<-liftM pointer get
+    let maxAddr=max 0 $ maximum (map msize $ M.elems t)-1
+        ss=map (\x->dumpMemoryBetween p t (x*w,(x+1)*w-1)) [0..maxAddr `div` w]
+    liftIO $ mapM_ putStrLn ss
+    where w=16
+
+dumpMemoryBetween :: Int -> MemTable -> (Int,Int) -> String
+dumpMemoryBetween p t (a0,a1)=unlines $ map dumpKey ks
+    where
+        ks=M.keys t
+        head=maximum $ map length ks
+        dumpKey k=printf ("%"++show head++"s|") k++dump (t M.! k)
+        dump fm=unwords $ map (\x->showAddr x $ mread fm x) [a0..a1]
+        showAddr a v=(if a==p then ">" else " ")++(showHex v "")
+
+    
     
 
 execStmt p (Alloc r)=modifyRT $ M.adjust (first $ M.insert r 0) p
@@ -500,16 +525,5 @@ modifyMT f=modify $ \x->x{memTable=f $ memTable x}
 modifyPointer :: Monad m => (Int -> Int) -> SAMST m ()
 modifyPointer f=modify $ \x->x{pointer=g $ pointer x}
     where g x=let y=f x in if x<0 then error $ "modifyPointer: invalid pos: "++show y else y
-
-
-
-
-
-    
-
-
-
-
-
 
 
