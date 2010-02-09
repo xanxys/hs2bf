@@ -123,12 +123,14 @@ compileCode m c=SProc (compileName c) [] $ case c of
                          ,Move (Memory "S0" 0) [Register "temp"]
                          ,Inline "#stack1" []
                          ,Inline "#heapNew_" []
+                         ,Clear (Memory "H0" $ negate $ 1+ix)
                          ,Move (Register "temp") [Memory "H0" $ negate $ 1+ix]
                          ,Delete "temp"
                          ]
     Slide n ->
         [Inline "#stackNew" []
         ,Locate (-1)
+        ,Clear (Memory "S0" $ negate n)
         ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
         ]
         ++map (Clear . Memory "S0" . negate) [1..n-1]
@@ -200,6 +202,7 @@ eval=SProc "%eval" ["sc"]
     ,Dispatch "tag"
         [(scTag,
             [Move (Memory "H0" 2) [Register "temp"]
+            ,Clear (Register "sc")
             ,Move (Register "temp") [Memory "H0" 2,Register "sc"]
             ,Inline "#heap1" []
             ])

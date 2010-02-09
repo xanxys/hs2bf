@@ -67,9 +67,7 @@ sovAux n (BFVInc:xs)=sovAux (n+1) xs
 sovAux n (BFVDec:xs)=sovAux (n-1) xs
 sovAux n xs=dV n++soptBF xs
 
-compileS (Move p ps)=
-    (concatMap (\p->compileS $ While p [Val p (-1)]) ps)++
-    (compileS $ While p $ Val p (-1):map (flip Val 1) ps)
+compileS (Move p ps)=compileS $ While p $ Val p (-1):map (flip Val 1) ps
 compileS (While (Memory _ d) ss)=concat
     [dP d
     ,[BFLoop $ concat [dP (negate d),concatMap compileS ss,dP d]]
@@ -127,7 +125,7 @@ allocateRegister (SAM rs [SProc name [] ss])
 allocateRS :: [Maybe RegName] -> Stmt -> ([Maybe RegName],[Stmt])
 allocateRS rs (Alloc r)=case elemIndex Nothing rs of
     Nothing -> (rs++[Just r],[])
-    Just ix -> (mapAt ix (const $ Just r) rs,[Move (Memory "R" ix) []])
+    Just ix -> (mapAt ix (const $ Just r) rs,[])
 allocateRS rs (Delete r)=case elemIndex (Just r) rs of
     Just ix -> (mapAt ix (const Nothing) rs,[Move (Memory "R" ix) []])
     Nothing -> error $ "allocateRS: deleting unknown register: "++r
@@ -491,7 +489,7 @@ execStmt p s0@(While ptr ss)=do
     x<-readPtr p ptr
     when (x/=0) $ execStmts p ss >> execStmt p s0
 execStmt p (Move ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
-    where f (x:xs)=0:repeat x
+    where f (x:xs)=0:map (+x) xs
 execStmt p (Locate d)=modifyPointer (+d)
 execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
