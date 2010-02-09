@@ -67,7 +67,9 @@ sovAux n (BFVInc:xs)=sovAux (n+1) xs
 sovAux n (BFVDec:xs)=sovAux (n-1) xs
 sovAux n xs=dV n++soptBF xs
 
-compileS (Move p ps)=compileS $ While p $ Val p (-1):map (flip Val 1) ps
+compileS (Move p ps)=
+    (concatMap (\p->compileS $ While p [Val p (-1)]) ps)++
+    (compileS $ While p $ Val p (-1):map (flip Val 1) ps)
 compileS (While (Memory _ d) ss)=concat
     [dP d
     ,[BFLoop $ concat [dP (negate d),concatMap compileS ss,dP d]]
@@ -439,7 +441,8 @@ enterProc name args=do
     
     let rtb'=M.insert name (M.empty,M.fromList $ zipWith (\org to->(to,uncurry (reduceReg rtb) org)) args rs) rtb
     modify (\x->x{regTable=rtb'})
-    mapM_ (\x->execStmt name x >> dumpRegisters >> dumpMemory >> liftIO (putStrLn "")) ss
+--    mapM_ (\x->execStmt name x >> dumpRegisters >> dumpMemory >> liftIO (putStrLn "")) ss
+    mapM_ (execStmt name) ss
     modify (\x->x{regTable=M.delete name $ regTable x})
 
 dumpMemory :: SAMST IO ()
@@ -485,7 +488,7 @@ execStmt p s0@(While ptr ss)=do
     x<-readPtr p ptr
     when (x/=0) $ mapM_ (execStmt p) ss >> execStmt p s0
 execStmt p (Move ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
-    where f (x:xs)=0:map (+x) xs
+    where f (x:xs)=0:repeat x
 execStmt p (Locate d)=modifyPointer (+d)
 execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
