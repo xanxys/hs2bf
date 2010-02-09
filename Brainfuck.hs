@@ -79,7 +79,7 @@ evalBF (BFInput:is) ptr arr=getChar >>= writeArray arr ptr . fromIntegral . ord 
 evalBF (BFOutput:is) ptr arr=readArray arr ptr >>= putChar . chr . fromIntegral >> evalBF is ptr arr
 evalBF is0@(BFLoop ss:is) ptr arr=do
     flag<-readArray arr ptr
-    if flag==0 then evalBF is ptr arr else evalBF ss ptr arr >> evalBF is0 ptr arr
+    if flag==0 then evalBF is ptr arr else evalBF (ss++is0) ptr arr
 
 
 detectLoop is=pprog is
