@@ -472,7 +472,7 @@ dumpRegisterP proc (m0,m1)
     |otherwise = unlines $ ("in "++proc++":"):rs
     where
         rs=(map (\(n,v)->"  "++n++": "++showHex v "") $ M.assocs m0)++
-           (map (\(n,a)->"  "++n++" -> "++show a) $ M.assocs m0)
+           (map (\(n,a)->"  "++n++" -> "++show a) $ M.assocs m1)
 
     
     
