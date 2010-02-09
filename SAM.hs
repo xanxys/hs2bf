@@ -81,7 +81,7 @@ replicateZ x m p
     |x==0 = []
     |x>0  = replicate x p
     |x<0  = replicate (negate x) m
-    
+
 
 
 -- | Apply this before 'SAM.compile'
@@ -190,6 +190,9 @@ data SAM=SAM [Region] [SProc] deriving(Show)
 
 data SProc=SProc ProcName [RegName] [Stmt] deriving(Show)
 
+procName :: SProc -> ProcName
+procName (SProc name _ _)=name
+
 -- | Statement set of SAM.
 --
 -- Operations with 'RegName' in their arguments changes scope
@@ -197,11 +200,9 @@ data Stmt
     =Locate Int -- ^ ptr+=n
     |Alloc RegName
     |Delete RegName
-    |Dispatch RegName [(Int,[Stmt])]
-    -- ^ in case alts, given RegName will be out of scope. This instruction is erratic in many ways...
-    --  Get rid of it ASAP! (1. Come up with new instruction, 2. expand to while on the fly)
+    |Dispatch RegName [(Int,[Stmt])] -- ^ in case alts, given RegName will be out of scope. This instruction is erratic in many ways...
     |Inline ProcName [RegName]
-    |Clear Pointer -- ^ treat as a syntax sugar of Move p []
+    |Clear Pointer -- ^ syntax sugar of Move p []
     |Move Pointer [Pointer]
     |Val Pointer Int
     |While Pointer [Stmt]
@@ -262,8 +263,7 @@ pprintCase (n,ss)=Pack [Line $ Prim $ show n,Indent $ Pack $ map pprintStmt ss]
 
 
 
-data SAMInternal=SAMInternal Int [(String,FlatMemory)] [(String,Word8)]
-type SAMS=State SAMInternal
+
 
 
 -- | Flatten procedures with given root.
@@ -396,6 +396,118 @@ checkStmt (_:xs) rs=checkStmt xs rs
 checkPointer :: Pointer -> S.Set RegName -> NMRE ()
 checkPointer (Register x) rs=unless (S.member x rs) $ within "pointer" $ report $ "unknown register: "++x
 checkPointer _ rs=return ()
+
+
+
+-- | Interpreter of 'SAM', usable for all phases.
+interpret :: SAM -> IO ()
+interpret s@(SAM rs procs)=do
+    runProcessWithIO (const $ return ()) $ checkSAM "SAMi" s
+    let
+        ptb0=M.fromList $ map (procName &&& id) procs
+        mtb0=(M.fromList $ zip rs $ repeat minit)
+        st0=SAMInternal ptb0 mtb0 M.empty 0
+    
+    evalStateT (enterProc "^" []) st0
+
+data SAMInternal=SAMInternal
+    {procTable :: M.Map ProcName SProc
+    ,memTable :: MemTable
+    ,regTable :: RegTable
+    ,pointer :: Int
+    }
+
+type MemTable=M.Map Region FlatMemory
+type RegTable=M.Map ProcName (M.Map RegName Word8,M.Map RegName (ProcName,RegName))
+
+type SAMST=StateT SAMInternal
+
+
+enterProc :: ProcName -> [(ProcName,RegName)] -> SAMST IO ()
+enterProc name args=do
+    ptb<-liftM procTable get
+    rtb<-liftM regTable get
+    let SProc _ rs ss=M.findWithDefault (error $ "SAMi: procedure not found: "++name) name ptb
+    when (length rs/=length args) $ error $ "SAMi: procedure arity error: "++show (name,rs,args) 
+    when (M.member name rtb) $ error $ "SAMi: re-entring to precedure: "++name
+    
+    let rtb'=M.insert name (M.empty,M.fromList $ zipWith (\org to->(to,uncurry (reduceReg rtb) org)) args rs) rtb
+    modify (\x->x{regTable=rtb'})
+    mapM_ (execStmt name) ss
+    modify (\x->x{regTable=M.delete name $ regTable x})
+    
+
+execStmt p (Alloc r)=modifyRT $ M.adjust (first $ M.insert r 0) p
+execStmt p (Delete r)=modifyRT $ M.adjust (first $ M.delete r) p
+execStmt p (Inline n rs)=enterProc n (zip (repeat p) rs)
+execStmt p (Val ptr d)=liftM (+fromIntegral d) (readPtr p ptr) >>= writePtr p ptr
+execStmt p s0@(While ptr ss)=do
+    x<-readPtr p ptr
+    when (x/=0) $ mapM_ (execStmt p) ss >> execStmt p s0
+execStmt p (Move ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
+    where f (x:xs)=0:map (+x) xs
+execStmt p (Locate d)=modifyPointer (+d)
+execStmt p (Dispatch r cs)=do
+    x<-readPtr p (Register r)
+    let caluse=lookup (fromIntegral x) cs
+    maybe (error $ "SAMi: unhandled value in dispatch: "++show (x,p,r)) (mapM_ $ execStmt p) caluse
+execStmt p (Clear ptr)=writePtr p ptr 0
+    
+    
+    
+    
+readPtr :: Monad m => ProcName -> Pointer -> SAMST m Word8
+readPtr p (Memory r d)=do
+    dp<-liftM pointer get
+    when (dp+d<0) $ error $ "readPtr: invalid op:"++show (p,r,dp,d)
+    liftM (flip mread (dp+d) . (M.! r) . memTable) get
+readPtr p (Register r)=liftM (flip (flip readReg p) r . regTable) get
+
+
+writePtr :: Monad m => ProcName -> Pointer -> Word8 -> SAMST m ()
+writePtr p (Memory r d) x=do
+    dp<-liftM pointer get
+    when (dp+d<0) $ error $ "writePtr: invalid op:"++show (p,r,dp,d)
+    modifyMT $ M.adjust (flip (flip mwrite (dp+d)) x) r
+writePtr p (Register r) x=modifyRT (\t->writeReg t p r x)
+
+
+
+
+readReg :: RegTable -> ProcName -> RegName -> Word8
+readReg t p r=(fst (t M.! p')) M.! r'
+    where (p',r')=reduceReg t p r
+
+writeReg :: RegTable -> ProcName -> RegName -> Word8 -> RegTable
+writeReg t p r x=M.adjust (first $ M.insert r x) p t
+    where (p',r')=reduceReg t p r
+
+
+reduceReg :: RegTable -> ProcName -> RegName -> (ProcName,RegName)
+reduceReg t p r
+    |M.member r org = (p,r)
+    |otherwise      = alias M.! r
+    where (org,alias)=t M.! p
+
+
+
+modifyRT :: Monad m => (RegTable -> RegTable) -> SAMST m ()
+modifyRT f=modify $ \x->x{regTable=f $ regTable x}
+
+modifyMT :: Monad m => (MemTable -> MemTable) -> SAMST m ()
+modifyMT f=modify $ \x->x{memTable=f $ memTable x}
+
+modifyPointer :: Monad m => (Int -> Int) -> SAMST m ()
+modifyPointer f=modify $ \x->x{pointer=g $ pointer x}
+    where g x=let y=f x in if x<0 then error $ "modifyPointer: invalid pos: "++show y else y
+
+
+
+
+
+    
+
+
 
 
 

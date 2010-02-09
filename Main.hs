@@ -80,15 +80,18 @@ execCommand (ShowMessage x)=putStr x
 execCommand (Interpret opt from)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
+    let core=xs >>= Front.compile
+        gm  =core >>= Core.compile
+        sam =gm   >>= GMachine.compile
+        sam'=sam  >>= SAM.simplify
+        bf  =sam' >>= SAM.compile
     case tolang opt of
-        LangCore _ -> error "Interpretation of Core is not supported"
-        LangGMachine -> evalWith GMachine.interpretGM $ runProcess $ xs >>= Front.compile >>= Core.compile
-        LangSAM _ -> error "Interpretation of SAM is not supported"
-        LangBF -> evalWith Brainfuck.interpretBF $ runProcess $ xs >>= Front.compile >>= Core.compile >>=
-                            GMachine.compile >>= SAM.simplify >>= SAM.compile
-    where
-        evalWith :: (a->IO ()) -> Either [CompileError] a -> IO ()
-        evalWith f=either (putStr . unlines . map show) f
+        LangCore _ -> error "Core interpreter is not implemented"
+        LangGMachine -> capProcess gm GMachine.interpretGM
+        LangSAM ""  -> capProcess sam  SAM.interpret
+        LangSAM "f" -> capProcess sam' SAM.interpret
+        LangBF -> capProcess bf Brainfuck.interpret
+    where capProcess=flip runProcessWithIO
 
 execCommand (Compile opt from)=do
     let (mod,env)=analyzeName from
@@ -104,10 +107,7 @@ execCommand (Compile opt from)=do
         LangSAM ""   -> capProcess sam SAM.pprint
         LangSAM "f"  -> capProcess sam' SAM.pprint
         LangBF       -> capProcess bf Brainfuck.pprint
-    where
-        capProcess pr f=outputWith f $ runProcess pr
-        outputWith :: (a->String) -> Either [CompileError] a -> IO ()
-        outputWith f=putStr . either (unlines . map show) f
+    where capProcess pr f=runProcessWithIO (putStr . f) pr
 
 
 version :: String

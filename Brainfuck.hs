@@ -62,8 +62,8 @@ sepC w xs
 -- * Each cell consists of a byte which represents Z256.
 --
 -- * Moving into negative address immediately causes an error.
-interpretBF :: BF -> IO ()
-interpretBF (BF is)=newArray (0,1000) 0 >>= evalBF (detectLoop is) 0
+interpret :: BF -> IO ()
+interpret (BF is)=newArray (0,1000) 0 >>= evalBF (detectLoop is) 0
 
 evalBF :: [BFInst] -> Int -> IOUArray Int Word8 -> IO ()
 evalBF [] ptr arr=return ()

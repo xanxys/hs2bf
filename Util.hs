@@ -28,6 +28,9 @@ type Process a=ErrorT [CompileError] Identity a
 runProcess :: Process a -> Either [CompileError] a
 runProcess=runIdentity . runErrorT
 
+runProcessWithIO :: (a->IO ()) -> Process a -> IO ()
+runProcessWithIO f=either (putStr . unlines . map show) f . runProcess
+
 
 
 
@@ -95,6 +98,9 @@ caux n (Indent b)=caux (n+1) b
 
 -- | Moderately fast memory suitable for use in interpreters.
 data FlatMemory=FlatMemory (IM.IntMap Word8)
+
+minit :: FlatMemory
+minit=FlatMemory $ IM.empty
 
 mread :: FlatMemory -> Int -> Word8
 mread (FlatMemory m) i=maybe 0 id $ IM.lookup i m

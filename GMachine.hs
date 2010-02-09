@@ -39,7 +39,7 @@ compile m
     |heapSpace>1 = error "GM->SAM: 2+ byte addresses are not supported"
     |otherwise   = return $ SAM (ss++hs) (lib++cmd++prc++loop)
     where
-        t=M.fromList $ zip (M.keys m) [0..]
+        t=M.fromList $ zip (M.keys m) [1..]
         
         -- code generation
         lib=[origin,heapNew,heapNew_,heapRef,stackNew]
@@ -154,8 +154,14 @@ mainLoop=SProc "%mainLoop" []
 eval :: SProc
 eval=SProc "%eval" ["sc"]
     [Inline "#origin" []
+    ,Locate 1
+    ,Inline "#stackNew" []
+    ,Locate (-1) -- stack top
     ,SAM.Alloc "addr"
-    ,Move (Memory "S0" (-1)) [Register "addr"]
+    ,SAM.Alloc "ta"
+    ,Move (Memory "S0" 0) [Register "ta"]
+    ,Move (Register "ta") [Register "addr",Memory "S0" 0]
+    ,Delete "ta"
     ,Inline "#origin" []
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"
@@ -338,7 +344,7 @@ aux []=do
     node<-trans $ refStack 0 >>= refHeap
     case node of
         App a0 a1 -> trans (push a0) >> aux []
-        Combinator x -> return (Just x)
+        Combinator x -> return (Just x) -- do not pop here, because the callee contains the code to remove it with arguments
         Struct 0 [f] -> trans pop >> liftIO (liftM ord getChar) >>= \x->aux [MkByte x]
         Struct 1 [x,k] -> trans pop >> trans (refHeap x) >>= liftIO . putChar . f >>
                           trans (push k) >> aux []
