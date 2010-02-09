@@ -439,7 +439,7 @@ enterProc name args=do
     
     let rtb'=M.insert name (M.empty,M.fromList $ zipWith (\org to->(to,uncurry (reduceReg rtb) org)) args rs) rtb
     modify (\x->x{regTable=rtb'})
-    mapM_ (execStmt name) ss
+    mapM_ (\x->execStmt name x >> dumpRegisters >> dumpMemory >> liftIO (putStrLn "")) ss
     modify (\x->x{regTable=M.delete name $ regTable x})
 
 dumpMemory :: SAMST IO ()
@@ -519,7 +519,7 @@ readReg t p r=(fst (t M.! p')) M.! r'
     where (p',r')=reduceReg t p r
 
 writeReg :: RegTable -> ProcName -> RegName -> Word8 -> RegTable
-writeReg t p r x=M.adjust (first $ M.insert r x) p t
+writeReg t p r x=M.adjust (first $ M.insert r' x) p' t
     where (p',r')=reduceReg t p r
 
 
