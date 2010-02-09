@@ -42,9 +42,10 @@ data GFCompileFlag=GFCompileFlag
 -- You can return from anywhere on stack to origin, but not from heap.
 compile :: M.Map String [GMCode] -> Process SAM
 compile m
-    |codeSpace>1 = error "GM->SAM: 255+ super combinator is not supported"
-    |heapSpace>1 = error "GM->SAM: 2+ byte addresses are not supported"
-    |otherwise   = return $ SAM (ss++hs) (lib++cmd++prc++loop)
+    |codeSpace>1          = error "GM->SAM: 255+ super combinator is not supported"
+    |heapSpace>1          = error "GM->SAM: 2+ byte addresses are not supported"
+    |M.notMember "main" m = error "GM->SAM: entry point not found"
+    |otherwise            = return $ SAM (ss++hs) (lib++cmd++prc++loop)
     where
         t=M.fromList $ ("main",1):zip (filter (/="main") $ M.keys m) [2..]
         
@@ -73,7 +74,7 @@ compileName (Push n)  ="%Push_"++show n
 
 -- | Compile a single 'GMCode' to a procedure. 1->1
 compileCode :: M.Map String Int -> GMCode -> SProc
-compileCode m c=SProc (compileName c) [] $ cap $ case c of
+compileCode m c=SProc (compileName c) [] $ case c of
     PushSC k -> -- [5,scTag,sc,id,5]
         [SAM.Alloc "temp"
         ,Inline "#heapNew" ["temp"]
@@ -93,28 +94,37 @@ compileCode m c=SProc (compileName c) [] $ cap $ case c of
         ,Inline "#stackNew" []
         ,Move (Register "addr") [Memory "S0" 0]
         ,Delete "addr"
+        ,Inline "#stack1" []
         ]
     Pack t n -> -- [5+n,stTag,t...id,5+n]
-        [SAM.Alloc "addr"
-        ,Inline "#heapNew" ["addr"]
-        ,Clear (Memory "H0" $ 3+n),Move (Register "addr") [Memory "H0" $ 3+n]
-        ,Delete "addr"
+        [SAM.Alloc "temp"
+        ,Inline "#heapNew" ["temp"]
+        ,Clear (Memory "H0" $ 3+n)
+        ,SAM.Alloc "addr"
+        ,Move (Register "temp") [Memory "H0" $ 3+n,Register "addr"]
+        ,Delete "temp"
         ,Val (Memory "H0" 0) $ 5+n -- size
         ,Clear (Memory "H0" 1),Val (Memory "H0" 1) structTag -- frame tag
         ,Clear (Memory "H0" 2),Val (Memory "H0" 2) t -- struct tag
-        ,Clear (Memory "H0" $ 4+n) -- size
+        ,Clear (Memory "H0" $ 4+n),Val (Memory "H0" $ 4+n) $ 5+n -- size
         ,Clear (Memory "H0" $ 5+n) -- new frame
-        ,SAM.Alloc "temp"
+        ]++
+        concatMap st2heap (reverse [1..n])++ -- pack struct members from back to front
+        [Inline "#heap1" []
+        ,Inline "#stackNew" []
+        ,Move (Register "addr") [Memory "S0" 0]
+        ,Delete "addr"
+        ,Inline "#stack1" []
         ]
-        ++concatMap st2heap (reverse [1..n]) -- pack struct members from back to front
-        ++[SAM.Delete "temp"]
         where st2heap ix=[Inline "#heap1" []
                          ,Inline "#stackNew" []
                          ,Locate (-1)
+                         ,SAM.Alloc "temp"
                          ,Move (Memory "S0" 0) [Register "temp"]
                          ,Inline "#stack1" []
                          ,Inline "#heapNew_" []
                          ,Move (Register "temp") [Memory "H0" $ negate $ 1+ix]
+                         ,Delete "temp"
                          ]
     Slide n ->
         [Inline "#stackNew" []
@@ -122,14 +132,15 @@ compileCode m c=SProc (compileName c) [] $ cap $ case c of
         ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
         ]
         ++map (Clear . Memory "S0" . negate) [1..n-1]
+        ++[Locate $ negate n]
     Push n ->
         [Inline "#stackNew" []
         ,SAM.Alloc "temp"
         ,Move (Memory "S0" $ negate $ n+1) [Memory "S0" 0,Register "temp"]
         ,Move (Register "temp") [Memory "S0" $ negate $ n+1]
         ,Delete "temp"
+        ,Inline "#stack1" []
         ]
-    where cap ss=ss++[Inline "#heap1" []]
     
 appTag=0
 scTag=1
@@ -190,6 +201,7 @@ eval=SProc "%eval" ["sc"]
         [(scTag,
             [Move (Memory "H0" 2) [Register "temp"]
             ,Move (Register "temp") [Memory "H0" 2,Register "sc"]
+            ,Inline "#heap1" []
             ])
         ,(structTag,
             [Move (Memory "H0" 2) [Register "temp"]
@@ -197,15 +209,17 @@ eval=SProc "%eval" ["sc"]
             ,Move (Register "temp") [Memory "H0" 2,Register "stag"]
             ,Dispatch "stag"
                 [(0, -- input f
-                    [])
+                    [Inline "#heap1" []
+                    ])
                 ,(1, -- output x k
-                    [])
+                    [Inline "#heap1" []
+                    ])
                 ,(2, -- halt
                     [Clear (Register "sc")
                     ,Inline "#heap1" []
-                    ,Locate 1
                     ,Inline "#stackNew" []
                     ,Clear (Memory "S0" (-1))
+                    ,Locate (-1)
                     ])
                 ]
             ,Delete "stag"
@@ -223,7 +237,7 @@ exec xs=SProc "%exec" ["sc"]
     ,Move (Register "sc") [Register "temp",Register "temp2"]
     ,Move (Register "temp") [Register "sc"]
     ,Delete "temp"
-    ,Dispatch "temp2" $ map f xs
+    ,Dispatch "temp2" $ (0,[]):map f xs
     ,Delete "temp2"
     ]
     where f (str,n)=(n,[Inline ("!"++str) []])
@@ -287,7 +301,8 @@ heapRef :: SProc
 heapRef=SProc "#heapRef" ["addr"]
     [Val (Register "addr") (-1)
     ,While (Register "addr")
-        [SAM.Alloc "temp"
+        [Val (Register "addr") (-1)
+        ,SAM.Alloc "temp"
         ,SAM.Alloc "cnt"
         ,Move (Memory "H0" 0) [Register "temp"]
         ,Move (Register "temp") [Memory "H0" 0,Register "cnt"]

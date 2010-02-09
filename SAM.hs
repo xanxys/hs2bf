@@ -126,7 +126,7 @@ allocateRegister (SAM rs [SProc name [] ss])
 
 allocateRS :: [Maybe RegName] -> Stmt -> ([Maybe RegName],[Stmt])
 allocateRS rs (Alloc r)=case elemIndex Nothing rs of
-    Nothing -> (rs++[Just r],[Move (Memory "R" $ length rs) []])
+    Nothing -> (rs++[Just r],[])
     Just ix -> (mapAt ix (const $ Just r) rs,[Move (Memory "R" ix) []])
 allocateRS rs (Delete r)=case elemIndex (Just r) rs of
     Just ix -> (mapAt ix (const Nothing) rs,[Move (Memory "R" ix) []])
@@ -137,12 +137,16 @@ allocateRS rs (While p ss)
     |otherwise   = error "allocateRS: unmatched register scope in while"
     where (rs',sss)=mapAccumL allocateRS rs ss
 allocateRS rs (Val p d)=(rs,[Val (allocateRP rs p) d])
-allocateRS rs (Locate d)=(rs,mv++[Locate d])
+allocateRS rs (Locate d)
+    |d>0 = (rs,mvPos++[Locate d])
+    |d<0 = (rs,mvNeg++[Locate d])
+    |d==0 = (rs,[])
     where
-        mv=map (gen . fst) $ filter (isJust . snd) $ zip [0..] rs
+        mvPos=reverse mvNeg
+        mvNeg=map (gen . fst) $ filter (isJust . snd) $ zip [0..] rs
         gen ix=Move (Memory "R" ix) [Memory "R" $ ix+d]
-        
-        
+
+
 eqRS :: [Maybe RegName] -> [Maybe RegName] -> Bool
 eqRS [] []=True
 eqRS (Nothing:xs) []=eqRS xs []
@@ -150,7 +154,7 @@ eqRS [] (Nothing:ys)=eqRS [] ys
 eqRS (x:xs) (y:ys)=(x==y) && (xs `eqRS` ys)
 eqRS _ _=False
 
-                
+
 
 
 allocateRP :: [Maybe RegName] -> Pointer -> Pointer
@@ -173,18 +177,20 @@ desugarStmt (Clear ptr)=[Move ptr []]
 desugarStmt s=[s]
 
 -- | Case numbers must be sorted in ascending order.
-expandDispatch r []=[]
+-- _dt must be 0 before and after dispatch
+-- r must be 0 after dispatch
+expandDispatch r []=error "empty dispatch"
+expandDispatch r [(n,e)]
+    |abs n<3   = e++[Val (Register r) $ negate n]
+    |otherwise = e++[Clear (Register r)]
 expandDispatch r ((n0,e0):cs)=
-    [Clear (Register "_dt")
+    [Val (Register "_dt") 1
     ,Val (Register r) (negate $ n0)
     ,While (Register r) $
-        expandDispatch r (map (\(n,e)->(n-n0,e)) cs)++
-        [Clear (Register "_dt")
-        ,Val (Register "_dt") 1
-        ]
+        Val (Register "_dt") (-1):
+        expandDispatch r (map (\(n,e)->(n-n0,e)) cs)
     ,While (Register "_dt") $
-        e0++
-        [Clear (Register "_dt")]
+        Val (Register "_dt") (-1):e0
     ]
 
 
@@ -441,8 +447,7 @@ enterProc name args=do
     
     let rtb'=M.insert name (M.empty,M.fromList $ zipWith (\org to->(to,uncurry (reduceReg rtb) org)) args rs) rtb
     modify (\x->x{regTable=rtb'})
---    mapM_ (\x->execStmt name x >> dumpRegisters >> dumpMemory >> liftIO (putStrLn "")) ss
-    mapM_ (execStmt name) ss
+    execStmts name ss
     modify (\x->x{regTable=M.delete name $ regTable x})
 
 dumpMemory :: SAMST IO ()
@@ -452,7 +457,7 @@ dumpMemory=do
     let maxAddr=max 0 $ maximum (map msize $ M.elems t)-1
         ss=map (\x->dumpMemoryBetween p t (x*w,(x+1)*w-1)) [0..maxAddr `div` w]
     liftIO $ putStr $ unlines ss
-    where w=16
+    where w=30
 
 dumpMemoryBetween :: Int -> MemTable -> (Int,Int) -> String
 dumpMemoryBetween p t (a0,a1)=unlines $ map dumpKey ks
@@ -460,8 +465,8 @@ dumpMemoryBetween p t (a0,a1)=unlines $ map dumpKey ks
         ks=M.keys t
         head=maximum $ map length ks
         dumpKey k=printf ("%"++show head++"s|") k++dump (t M.! k)
-        dump fm=unwords $ map (\x->showAddr x $ mread fm x) [a0..a1]
-        showAddr a v=(if a==p then ">" else " ")++(showHex v "")
+        dump fm=concatMap (\x->showAddr x $ mread fm x) [a0..a1]
+        showAddr a v=(if a==p then ">" else " ")++(printf "%02s" $ showHex v "")
 
 dumpRegisters :: SAMST IO ()
 dumpRegisters=do
@@ -470,15 +475,13 @@ dumpRegisters=do
     liftIO $ putStr $ concat ss
 
 dumpRegisterP :: ProcName -> (M.Map RegName Word8,M.Map RegName (ProcName,RegName)) -> String
-dumpRegisterP proc (m0,m1)
-    |null rs = ""
-    |otherwise = unlines $ ("in "++proc++":"):rs
+dumpRegisterP proc (m0,m1)=unlines $ ("in "++proc++":"):rs
     where
         rs=(map (\(n,v)->"  "++n++": "++showHex v "") $ M.assocs m0)++
            (map (\(n,a)->"  "++n++" -> "++show a) $ M.assocs m1)
 
     
-    
+execStmts p=mapM_ (\x->execStmt p x >> liftIO (putStrLn (p++" "++show x)) >> dumpRegisters >> dumpMemory >> liftIO (putStrLn ""))
 
 execStmt p (Alloc r)=modifyRT $ M.adjust (first $ M.insert r 0) p
 execStmt p (Delete r)=modifyRT $ M.adjust (first $ M.delete r) p
@@ -486,7 +489,7 @@ execStmt p (Inline n rs)=enterProc n (zip (repeat p) rs)
 execStmt p (Val ptr d)=liftM (+fromIntegral d) (readPtr p ptr) >>= writePtr p ptr
 execStmt p s0@(While ptr ss)=do
     x<-readPtr p ptr
-    when (x/=0) $ mapM_ (execStmt p) ss >> execStmt p s0
+    when (x/=0) $ execStmts p ss >> execStmt p s0
 execStmt p (Move ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
     where f (x:xs)=0:repeat x
 execStmt p (Locate d)=modifyPointer (+d)
