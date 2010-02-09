@@ -41,8 +41,7 @@ data Language
 
 -- | All /global options/
 data Option=Option
-    {optimize :: Bool
-    ,bfAddrSpace :: Int
+    {addrSpace :: Int
     ,verbose :: Bool
     ,debug :: Bool
     ,tolang :: Language
@@ -62,9 +61,8 @@ parseArgs _=ShowMessage "Invalid command. See 'hs2bf --help' for usage."
 
 
 parseOption :: [String] -> Option
-parseOption []=Option{optimize=False,bfAddrSpace=2,verbose=True,debug=False,tolang=LangBF}
+parseOption []=Option{addrSpace=2,verbose=True,debug=False,tolang=LangBF}
 parseOption (term:xs)=case term of
-    "-O"  -> o{optimize=True}
     '-':'S':'c':xs -> o{tolang=LangCore xs}
     "-Sg" -> o{tolang=LangGMachine}
     '-':'S':'s':xs -> o{tolang=LangSAM xs}
@@ -105,7 +103,7 @@ execCommand (Compile opt from)=do
         LangGMachine -> capProcess gm GMachine.pprintGM
         LangSAM ""   -> capProcess sam SAM.pprint
         LangSAM "f"  -> capProcess sam' SAM.pprint
-        LangBF       -> capProcess bf show
+        LangBF       -> capProcess bf Brainfuck.pprint
     where
         capProcess pr f=outputWith f $ runProcess pr
         outputWith :: (a->String) -> Either [CompileError] a -> IO ()
@@ -126,11 +124,12 @@ help=unlines $
     ,""
     ,"option:"
     ,"  -o <file> : output path"
-    ,"  -O : enable optimization"
-    ,"  -Sc  : to Core code"
-    ,"  -Sm  : to GMachine"
+    ,"  -Sc : to Core code"
+    ,"  -Sm : to GMachine"
+    ,"  -Ss : to SAM"
+    ,"  -Sg : to SCGR"
     ,"  -Sb : to BF"
-    ,"  --bf-addr n : use n byte for pointer arithmetic"
+    ,"  --addr n : use n byte for pointer arithmetic"
     ,"  --debug : include detailed error message (this will make the program a LOT larger)"
     ,""
     ,"examples:"

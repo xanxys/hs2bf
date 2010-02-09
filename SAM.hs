@@ -41,26 +41,121 @@ import qualified Data.Set as S
 
 import Util
 import SCGR
+import Brainfuck
 
 
 compile :: SAM -> Process SCGR
-compile x=return undefined
+compile (SAM _ [SProc _ [] ss])=return $ BF $ soptBF $ concatMap compileS ss
+
+soptBF []=[]
+soptBF xs=case head xs of
+    BFPInc -> sopAux 0 xs
+    BFPDec -> sopAux 0 xs
+    BFVInc -> sovAux 0 xs
+    BFVDec -> sovAux 0 xs
+    BFLoop s -> BFLoop (soptBF s):xs'
+    _ -> BFInput:xs'
+    where xs'=soptBF $ tail xs
+
+sopAux n (BFPInc:xs)=sopAux (n+1) xs
+sopAux n (BFPDec:xs)=sopAux (n-1) xs
+sopAux n xs=dP n++soptBF xs
+
+sovAux n (BFVInc:xs)=sovAux (n+1) xs
+sovAux n (BFVDec:xs)=sovAux (n-1) xs
+sovAux n xs=dV n++soptBF xs
+
+compileS (Move p ps)=compileS $ While p $ Val p (-1):map (flip Val 1) ps
+compileS (While (Memory _ d) ss)=concat
+    [dP d
+    ,[BFLoop $ concat [dP (negate d),concatMap compileS ss,dP d]]
+    ,dP (negate d)]
+compileS (Val (Memory _ d) v)=concat [dP d,dV v,dP $ negate d]
+compileS (Locate d)=dP d
+
+dP x=replicateZ x BFPDec BFPInc
+dV x=replicateZ x BFVDec BFVInc
 
 
-foldMemory :: SAM -> Process SAM
-foldMemory (SAM rs procs)=return $ SAM rs procs
+replicateZ x m p
+    |x==0 = []
+    |x>0  = replicate x p
+    |x<0  = replicate (negate x) m
+    
+
 
 -- | Apply this before 'SAM.compile'
 --
 -- * 'flatten': expand all inline calls
 --
--- * 'desugar': 'Dispatch' -> 'While'
---     (don't expand 'Clear' or 'Move' here, since they are good for later optimization)
+-- * 'desugar': 'Dispatch' -> 'While' 'Clear' -> 'Move'
+--     (don't expand 'Move' here, since they are good for later optimization)
+--
+-- * 'foldMemory': allocate registers
 simplify :: SAM -> Process SAM
 simplify s=
-    checkSAM "SAM" s >>= return . flatten "^" >>=
-    checkSAM "SAM:flattened" >>= return . desugar >>=
-    checkSAM "SAM:desugared"
+    checkSAM "SAM" s       >>= return . flatten "^" >>=
+    checkSAM "SAM:flat"    >>= return . desugar >>=
+    checkSAM "SAM:desugar" >>= return . allocateRegister >>=
+    checkSAM "SAM:ralloc"  >>= return . foldMemory >>=
+    checkSAM "SAM:folded"
+
+
+-- | no register access
+foldMemory :: SAM -> SAM
+foldMemory (SAM rs [SProc name [] ss])=SAM [""] [SProc name [] $ map (foldMS (length rs) rs) ss]
+
+foldMS n m (Move p ps)=Move (foldMP n m p) (map (foldMP n m) ps)
+foldMS n m (While p ss)=While (foldMP n m p) (map (foldMS n m) ss)
+foldMS n m (Val p d)=Val (foldMP n m p) d
+foldMS n m (Locate d)=Locate $ n*d
+
+foldMP n m (Memory r x)=Memory "" $ (fromJust $ elemIndex r m)+x*n
+
+
+-- | /very bad/ register allocator
+allocateRegister :: SAM -> SAM
+allocateRegister (SAM rs [SProc name [] ss])
+    |rs' `eqRS` [] = SAM (rs++["R"]) [SProc name [] $ concat sss]
+    |otherwise     = error $ "allocateRegister: leaking register: "++show rs'
+    where (rs',sss)=mapAccumL allocateRS [] ss
+
+allocateRS :: [Maybe RegName] -> Stmt -> ([Maybe RegName],[Stmt])
+allocateRS rs (Alloc r)=case elemIndex Nothing rs of
+    Nothing -> (rs++[Just r],[Move (Memory "R" $ length rs) []])
+    Just ix -> (mapAt ix (const $ Just r) rs,[Move (Memory "R" ix) []])
+allocateRS rs (Delete r)=case elemIndex (Just r) rs of
+    Just ix -> (mapAt ix (const Nothing) rs,[Move (Memory "R" ix) []])
+    Nothing -> error $ "allocateRS: deleting unknown register: "++r
+allocateRS rs (Move p ps)=(rs,[Move (allocateRP rs p) (map (allocateRP rs) ps)])
+allocateRS rs (While p ss)
+    |eqRS rs rs' = (rs,[While (allocateRP rs p) $ concat sss])
+    |otherwise   = error "allocateRS: unmatched register scope in while"
+    where (rs',sss)=mapAccumL allocateRS rs ss
+allocateRS rs (Val p d)=(rs,[Val (allocateRP rs p) d])
+allocateRS rs (Locate d)=(rs,mv++[Locate d])
+    where
+        mv=map (gen . fst) $ filter (isJust . snd) $ zip [0..] rs
+        gen ix=Move (Memory "R" ix) [Memory "R" $ ix+d]
+        
+        
+eqRS :: [Maybe RegName] -> [Maybe RegName] -> Bool
+eqRS [] []=True
+eqRS (Nothing:xs) []=eqRS xs []
+eqRS [] (Nothing:ys)=eqRS [] ys
+eqRS (x:xs) (y:ys)=(x==y) && (xs `eqRS` ys)
+eqRS _ _=False
+
+                
+
+
+allocateRP :: [Maybe RegName] -> Pointer -> Pointer
+allocateRP rs (Memory x d)=Memory x d
+allocateRP rs (Register r)
+    =maybe (error $ "allocateRP: non-allocated register: "++r) (Memory "R") $ elemIndex (Just r) rs
+
+
+
 
 desugar :: SAM -> SAM
 desugar (SAM rs [SProc name [] ss])=SAM rs [SProc name [] ss']
@@ -70,6 +165,7 @@ desugar (SAM rs [SProc name [] ss])=SAM rs [SProc name [] ss']
 desugarStmt :: Stmt -> [Stmt]
 desugarStmt (Dispatch r cs)=concatMap desugarStmt $ expandDispatch r $ sortBy (comparing fst) cs
 desugarStmt (While ptr ss)=[While ptr $ concatMap desugarStmt ss]
+desugarStmt (Clear ptr)=[Move ptr []]
 desugarStmt s=[s]
 
 -- | Case numbers must be sorted in ascending order.

@@ -18,7 +18,7 @@ import Util
 
 
 
--- | Original brainfuck.
+-- | Original brainfuck + loop construct.
 data BF=BF [BFInst]
 
 data BFInst
@@ -46,6 +46,14 @@ instance Show BFInst where
     show BFOutput="."
     show (BFLoop ss)="["++concatMap show ss++"]"
 
+
+pprint bf=unlines $ sepC 80 $ show bf
+
+sepC :: Int -> [a] -> [[a]]
+sepC w xs
+    |null rs   = [r]
+    |otherwise = r:sepC w rs
+    where (r,rs)=splitAt w xs
 
 -- | Assume /standard/ environment. That is
 --

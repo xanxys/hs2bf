@@ -20,10 +20,27 @@ module SCGR where
 import Util
 import Brainfuck
 
-type SCGR=BF
+{-
+data SCGR=SCGR [Node]
 
+data Node
+    =Frame Int
+    |Trans Point [Point]
+    |Cycle Point XXX
+    |Const Point Int
+
+data Point=Point
+    
 
 
 compile :: SCGR -> Process BF
+compile scgr=return undefined
+-}
+
+
+type SCGR=BF
+
+compile :: SCGR -> Process BF
 compile=return
+
 

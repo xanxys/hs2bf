@@ -129,6 +129,9 @@ change1 :: [a] -> [a] -> [[a]]
 change1 (x:xs) (y:ys)=(x:ys):map (y:) (change1 xs ys)
 change1 _ _=[]
 
+mapAt :: Int -> (a->a) -> [a] -> [a]
+mapAt ix0 f=zipWith g [0..]
+    where g ix x=if ix==ix0 then f x else x
 
 fst3 (x,_,_)=x
 snd3 (_,y,_)=y
