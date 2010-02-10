@@ -5,10 +5,13 @@
 module GMachine where
 import Control.Monad
 import Control.Monad.State
+import Control.Monad.Identity
 import Data.Char
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Set as S
+import System.IO
 
 import Util as U hiding(Pack)
 import qualified Util as U
@@ -70,7 +73,7 @@ compileName :: GMCode -> String
 compileName (PushSC k)="%PushSC_"++k
 compileName (Pack t n)="%Pack_"++show t++"_"++show n
 compileName (Slide n) ="%Slide_"++show n
-compileName (Push n)  ="%Push_"++show n
+compileName (PushArg n)  ="%PushArg_"++show n
 
 -- | Compile a single 'GMCode' to a procedure. 1->1
 compileCode :: M.Map String Int -> GMCode -> SProc
@@ -135,7 +138,7 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ]
         ++map (Clear . Memory "S0" . negate) [1..n-1]
         ++[Locate $ negate n]
-    Push n ->
+    PushArg n ->
         [Inline "#stackNew" []
         ,SAM.Alloc "temp"
         ,Move (Memory "S0" $ negate $ n+1) [Memory "S0" 0,Register "temp"]
@@ -340,9 +343,9 @@ data GMCode
     |Alloc Int
     |Update Int -- ^ \[n\]:=Ind &\[0\] and pop 1
     |Pop Int -- ^ remove n items
-    |MkApp
+    |MkApp -- ^ function must be pushed after arguments. then use this.
     |Eval
-    |Push Int
+    |PushArg Int
     |PushSC String
     |PushByte Int
     |Pack Int Int
@@ -384,72 +387,104 @@ newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()
-interpretGM fs=evalStateT (exec []) (makeEmptySt "main")
+interpretGM fs=do
+    hSetBuffering stdin NoBuffering
+    hSetBuffering stdout NoBuffering
+    evalStateT (exec []) (makeEmptySt "main")
     where exec code=aux code >>= maybe (return ()) (exec . (fs M.!))
 
 makeEmptySt :: String -> GMInternal
-makeEmptySt entry=execState (alloc (Combinator entry) >>= push) $ GMInternal [] M.empty
+makeEmptySt entry=runIdentity $ execStateT (alloc (Combinator entry) >>= push) $ GMInternal [] M.empty
 
 
 -- | Interpret a single combinator and returns new combinator to be executed.
 aux :: [GMCode] -> GMST IO (Maybe String)
-aux (c:cs)=trans (evalGM c) >> aux cs
+aux (c:cs)=evalGM c >> aux cs
 aux []=do
-    node<-trans $ refStack 0 >>= refHeap
+    st<-get
+    liftIO $ putStrLn $ "GMi: aux:\n"++showState st
+    
+    node<-refStack 0 >>= refHeap
     case node of
-        App a0 a1 -> trans (push a0) >> aux []
+        App a0 a1 -> push a0 >> aux []
         Combinator x -> return (Just x) -- do not pop here, because the callee contains the code to remove it with arguments
-        Struct 0 [f] -> trans pop >> liftIO (liftM ord getChar) >>= \x->aux [MkByte x]
-        Struct 1 [x,k] -> trans pop >> trans (refHeap x) >>= liftIO . putChar . f >>
-                          trans (push k) >> aux []
-        Struct 2 [] -> trans pop >> return Nothing
-    where f (Const x)=chr x
+        Struct 0 [f] -> do
+            pop
+            x<-liftIO (liftM ord getChar)
+            evalGM (MkByte x) >> push f >> evalGM MkApp
+            aux []
+        Struct 1 [x,k] -> do
+            pop
+            refHeap x >>= (liftIO . putChar . unConst)
+            push k
+            aux []
+        Struct 2 [] -> pop >> return Nothing
+    where unConst (Const x)=chr x
 
 
--- | Convert 'State' monad to a 'StateT' without chaning its function.
-trans :: Monad m => State s a -> StateT s m a
-trans (State f)=StateT (\s->return $ f s)
+showState :: GMInternal -> String
+showState g=unlines $
+    unwords (map show st):map (\(k,v)->show k++":"++show v) (M.assocs hp)
+    where GMInternal st hp=gc g
 
 
-refHeap0 :: Address -> GMS GMNode
+-- | do not modify pointers
+gc :: GMInternal -> GMInternal
+gc (GMInternal st hp)=GMInternal st hp'
+    where
+        hp'=M.filterWithKey (\k _ ->S.member k ns) $ hp
+        ns=S.unions $ map (collect hp) st
+
+
+collect heap addr=S.insert addr $
+    case heap M.! addr of
+        App a0 a1 -> S.union (collect heap a0) (collect heap a1)
+        Ref a -> collect heap a
+        Struct _ as -> S.unions $ map (collect heap) as
+        _ -> S.empty
+
+
+refHeap0 :: Monad m => Address -> GMST m GMNode
 refHeap0 addr=liftM ((M.!addr) . heap) get
 
-refHeap :: Address -> GMS GMNode
+refHeap :: Monad m => Address -> GMST m GMNode
 refHeap addr=do
     n<-refHeap0 addr
     case n of
         Ref addr' -> refHeap addr'
         _ -> return n
 
-refStack :: Int -> GMS Address
+refStack :: Monad m => Int -> GMST m Address
 refStack n=liftM ((!!n) . stack) get
 
-push :: Address -> GMS ()
+push :: Monad m => Address -> GMST m ()
 push addr=do
     GMInternal st h<-get
     put $ GMInternal (addr:st) h
 
-alloc :: GMNode -> GMS Address
+alloc :: Monad m => GMNode -> GMST m Address
 alloc n=do
     GMInternal st h<-get
     let addr=if M.null h then Address 0 else let Address base=fst $ M.findMax h in Address (base+1)
     put $ GMInternal st $ M.insert addr n h
     return addr
 
-pop :: GMS Address
+pop :: Monad m => GMST m Address
 pop=do
     GMInternal (s:ss) h<-get
     put $ GMInternal ss h
     return s
 
-popn :: Int -> GMS [Address]
+popn :: Monad m => Int -> GMST m [Address]
 popn=flip replicateM pop
 
 
 
 -- | /Pure/ evaluation
-evalGM :: GMCode -> GMS ()
-evalGM (Push n)=refStack (n+1) >>= push
+evalGM :: Monad m => GMCode -> GMST m ()
+evalGM (PushArg n)=do
+    App _ arg<-refStack n >>= refHeap
+    push arg
 evalGM MkApp=do
     [s0,s1]<-popn 2 
     n<-alloc (App s0 s1)
@@ -463,6 +498,8 @@ evalGM (Slide n)=do
     x<-pop
     popn n
     push x
+evalGM (MkByte x)=alloc (Const x) >>= push
+evalGM x=error $ "evalGM: unsupported: "++show x
 
 
 

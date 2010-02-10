@@ -71,10 +71,10 @@ compileP (CrProc name args expr)=
         m=M.fromList $ zip (map unA args) [1..]
 
 compileE :: M.Map String Int -> CrExpr a -> S.Seq GMCode 
-compileE m (CrApp e0 e1)=(compileE m (unA e0) >< compileE m (unA e1)) |> MkApp
-compileE m (CrVar v)=S.singleton $ maybe (PushSC v) Push $ M.lookup v m
+compileE m (CrApp e0 e1)=(compileE m (unA e1) >< compileE m (unA e0)) |> MkApp
+compileE m (CrVar v)=S.singleton $ maybe (PushSC v) PushArg $ M.lookup v m
 compileE m (CrByte x)=S.singleton $ PushByte x
-compileE m (CrCstr t es)=concatS (map (compileE m . unA) es) |> Pack t (length es)
+compileE m (CrCstr t es)=concatS (map (compileE m . unA) $ reverse es) |> Pack t (length es)
 
 concatS :: [S.Seq a] -> S.Seq a
 concatS=foldr (><) S.empty
@@ -84,7 +84,7 @@ adjustStack :: [GMCode] -> [GMCode]
 adjustStack=aux 0
     where
         aux d []=[]
-        aux d (Push n:cs)=Push (d+n):aux (d+1) cs
+        aux d (PushArg n:cs)=PushArg (d+n):aux (d+1) cs
         aux d (MkApp:cs)=MkApp:aux (d-1) cs
         aux d (PushSC k:cs)=PushSC k:aux (d+1) cs
         aux d (PushByte x:cs)=PushByte x:aux (d+1) cs

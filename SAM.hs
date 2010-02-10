@@ -135,6 +135,19 @@ allocateRS rs (While p ss)
     |otherwise   = error "allocateRS: unmatched register scope in while"
     where (rs',sss)=mapAccumL allocateRS rs ss
 allocateRS rs (Val p d)=(rs,[Val (allocateRP rs p) d])
+{-
+allocateRS rs (Locate d)
+    |d/=0 = (rs',mv++[Locate d])
+    |d==0 = (rs,[])
+    where
+        rs'=map (\ix->lookup (ix-d) table') area
+        table'=map (snd3 &&& thr3) table
+        area=[0..maximum (map snd3 table)-d-1]
+        
+        mv=map (\(fr,to,_)->Move (Memory "R" fr) [Memory "R" to]) table
+        table=repackRS S.empty (map (second fromJust) $ filter (isJust . snd) $ zip [0..] rs) d
+-}
+-- just works (TM)
 allocateRS rs (Locate d)
     |d>0 = (rs,mvPos++[Locate d])
     |d<0 = (rs,mvNeg++[Locate d])
@@ -143,6 +156,22 @@ allocateRS rs (Locate d)
         mvPos=reverse mvNeg
         mvNeg=map (gen . fst) $ filter (isJust . snd) $ zip [0..] rs
         gen ix=Move (Memory "R" ix) [Memory "R" $ ix+d]
+
+-- | repack registers as densely as possible without causing collision
+repackRS :: S.Set Int -> [(Int,RegName)] -> Int -> [(Int,Int,RegName)]
+repackRS _ [] d=[]
+repackRS al rs d
+    |S.null cand = error "repackRS: unknown situation" -- what to do? (this is actually possible)
+    |not $ S.null nocost = allocate (S.findMin nocost) (S.findMin nocost)
+    |otherwise = allocate (fst $ head rs)  (S.findMin cand)
+    where
+        allocate fr to=(fr,to,maybe undefined id $ lookup fr rs):rs'
+            where rs'=repackRS (S.insert to al) (filter ((/=fr) . fst) rs) d
+        
+        nocost=S.intersection cand from
+        cand=S.fromList [d..d+length rs-1] S.\\ al
+        from=S.fromList $ map fst rs
+
 
 
 eqRS :: [Maybe RegName] -> [Maybe RegName] -> Bool
