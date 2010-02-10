@@ -146,6 +146,7 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Delete "temp"
         ,Inline "#stack1" []
         ]
+
     
 appTag=0
 scTag=1
@@ -191,28 +192,21 @@ eval=SProc "%eval" ["sc"]
     ,Inline "#stackNew" []
     ,Locate (-1) -- stack top
     ,SAM.Alloc "addr"
-    ,SAM.Alloc "ta"
-    ,Move (Memory "S0" 0) [Register "ta"]
-    ,Move (Register "ta") [Register "addr",Memory "S0" 0]
-    ,Delete "ta"
+    ,Copy (Memory "S0" 0) [Register "addr"]
     ,Inline "#stack1" []
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"
     ,SAM.Alloc "tag"
-    ,SAM.Alloc "temp"
-    ,Move (Memory "H0" 1) [Register "temp"]
-    ,Move (Register "temp") [Memory "H0" 1,Register "tag"]
+    ,Copy (Memory "H0" 1) [Register "tag"]
     ,Dispatch "tag"
         [(scTag,
-            [Move (Memory "H0" 2) [Register "temp"]
-            ,Clear (Register "sc")
-            ,Move (Register "temp") [Memory "H0" 2,Register "sc"]
+            [Clear (Register "sc")
+            ,Copy (Memory "H0" 2) [Register "sc"]
             ,Inline "#heap1" []
             ])
         ,(structTag,
-            [Move (Memory "H0" 2) [Register "temp"]
-            ,SAM.Alloc "stag"
-            ,Move (Register "temp") [Memory "H0" 2,Register "stag"]
+            [SAM.Alloc "stag"
+            ,Copy (Memory "H0" 2) [Register "stag"]
             ,Dispatch "stag"
                 [(0, -- input f
                     [Inline "#heap1" []
@@ -232,19 +226,15 @@ eval=SProc "%eval" ["sc"]
             ])
         ]
     ,Delete "tag"
-    ,Delete "temp"
     ]
 
 -- | Must be on address 1.
 exec :: [(String,Int)] -> SProc
 exec xs=SProc "%exec" ["sc"]
     [SAM.Alloc "temp"
-    ,SAM.Alloc "temp2"
-    ,Move (Register "sc") [Register "temp",Register "temp2"]
-    ,Move (Register "temp") [Register "sc"]
+    ,Copy (Register "sc") [Register "temp"]
+    ,Dispatch "temp" $ (0,[]):map f xs
     ,Delete "temp"
-    ,Dispatch "temp2" $ (0,[]):map f xs
-    ,Delete "temp2"
     ]
     where f (str,n)=(n,[Inline ("!"++str) []])
 
@@ -254,11 +244,8 @@ exec xs=SProc "%exec" ["sc"]
 heap1 :: SProc
 heap1=SProc "#heap1" []
     [While (Memory "H0" (-1))
-        [SAM.Alloc "temp"
-        ,SAM.Alloc "cnt"
-        ,Move (Memory "H0" (-1)) [Register "temp"]
-        ,Move (Register "temp") [Memory "H0" (-1),Register "cnt"]
-        ,Delete "temp"
+        [SAM.Alloc "cnt"
+        ,Copy (Memory "H0" (-1)) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate (-1)
@@ -271,17 +258,15 @@ heap1=SProc "#heap1" []
 -- The first size field is 0, but others are undefined.
 heapNew :: SProc
 heapNew=SProc "#heapNew" ["addr"]
-    [SAM.Alloc "temp"
-    ,While (Memory "H0" 0)
-        [Move (Memory "H0" 0) [Register "addr"]
-        ,Move (Register "addr") [Memory "H0" 0,Register "temp"]
-        ,While (Register "temp")
-            [Val (Register "temp") (-1)
+    [While (Memory "H0" 0)
+        [SAM.Alloc "cnt"
+        ,Copy (Memory "H0" 0) [Register "cnt"]
+        ,While (Register "cnt")
+            [Val (Register "cnt") (-1)
             ,Locate 1]
+        ,Delete "cnt"
         ]
-    ,Move (Memory "H0" (-2)) [Register "temp",Register "addr"]
-    ,Move (Register "temp") [Memory "H0" (-2)]
-    ,Delete "temp"
+    ,Copy (Memory "H0" (-2)) [Register "addr"]
     ,Val (Register "addr") 1
     ]
 
@@ -289,17 +274,14 @@ heapNew=SProc "#heapNew" ["addr"]
 -- The first size field is 0, but others are undefined.
 heapNew_ :: SProc
 heapNew_=SProc "#heapNew_" []
-    [SAM.Alloc "temp"
-    ,SAM.Alloc "cnt"
-    ,While (Memory "H0" 0)
-        [Move (Memory "H0" 0) [Register "temp"]
-        ,Move (Register "temp") [Memory "H0" 0,Register "cnt"]
+    [While (Memory "H0" 0)
+        [SAM.Alloc "cnt"
+        ,Copy (Memory "H0" 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1]
+        ,Delete "cnt"
         ]
-    ,Delete "temp"
-    ,Delete "cnt"
     ]
 
 -- | Move to the frame pointed by addr. addr will be 0. Must be aligned.
@@ -308,11 +290,8 @@ heapRef=SProc "#heapRef" ["addr"]
     [Val (Register "addr") (-1)
     ,While (Register "addr")
         [Val (Register "addr") (-1)
-        ,SAM.Alloc "temp"
         ,SAM.Alloc "cnt"
-        ,Move (Memory "H0" 0) [Register "temp"]
-        ,Move (Register "temp") [Memory "H0" 0,Register "cnt"]
-        ,Delete "temp"
+        ,Copy (Memory "H0" 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1

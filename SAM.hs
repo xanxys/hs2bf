@@ -90,7 +90,7 @@ replicateZ x m p
 --
 -- * 'flatten': expand all inline calls
 --
--- * 'desugar': 'Dispatch' -> 'While' 'Clear' -> 'Move'
+-- * 'desugar': 'Dispatch' -> 'While' 'Clear' -> 'Move' 'Copy' -> 'Move'
 --     (don't expand 'Move' here, since they are good for later optimization)
 --
 -- * 'foldMemory': allocate registers
@@ -201,6 +201,7 @@ desugarStmt :: Stmt -> [Stmt]
 desugarStmt (Dispatch r cs)=concatMap desugarStmt $ expandDispatch r $ sortBy (comparing fst) cs
 desugarStmt (While ptr ss)=[While ptr $ concatMap desugarStmt ss]
 desugarStmt (Clear ptr)=[Move ptr []]
+desugarStmt (Copy p ps)=[Alloc "_ct",Move p [Register "_ct"],Move (Register "_ct") (p:ps),Delete "_ct"]
 desugarStmt s=[s]
 
 -- | Case numbers must be sorted in ascending order.
@@ -235,14 +236,15 @@ procName (SProc name _ _)=name
 -- Operations with 'RegName' in their arguments changes scope
 data Stmt
     =Locate Int -- ^ ptr+=n
+    |While Pointer [Stmt]
+    |Val Pointer Int
     |Alloc RegName
     |Delete RegName
+    |Move Pointer [Pointer]
+    |Copy Pointer [Pointer] -- ^ syntax sugar of 'Move'
+    |Clear Pointer -- ^ syntax sugar of Move p []
     |Dispatch RegName [(Int,[Stmt])] -- ^ in case alts, given RegName will be out of scope. This instruction is erratic in many ways...
     |Inline ProcName [RegName]
-    |Clear Pointer -- ^ syntax sugar of Move p []
-    |Move Pointer [Pointer]
-    |Val Pointer Int
-    |While Pointer [Stmt]
     deriving(Show)
 
 data Pointer
@@ -289,6 +291,7 @@ pprintStmt (Val p n)=Line $ Span [Prim "val",Prim $ show p,Prim $ show n]
 pprintStmt (Alloc n)=Line $ Span [Prim "alloc",Prim n]
 pprintStmt (Delete n)=Line $ Span [Prim "delete",Prim n]
 pprintStmt (Move d ss)=Line $ Span $ Prim "move":map (Prim . show) (d:ss)
+pprintStmt (Copy d ss)=Line $ Span $ Prim "copy":map (Prim . show) (d:ss)
 pprintStmt (Locate n)=Line $ Span [Prim "locate",Prim $ show n]
 pprintStmt (Inline n rs)=Line $ Span $ map Prim ("inline":n:rs)
 pprintStmt (Clear r)=Line $ Span [Prim "clear",Prim $ show r]
@@ -357,6 +360,7 @@ replaceStmt f (Alloc n)=Alloc $ f n
 replaceStmt f (Delete n)=Delete $ f n
 replaceStmt f (Clear p)=Clear $ replacePtr f p
 replaceStmt f (Move p ps)=Move (replacePtr f p) (map (replacePtr f) ps)
+replaceStmt f (Copy p ps)=Copy (replacePtr f p) (map (replacePtr f) ps)
 replaceStmt f (Inline n ss)=error "replaceStmt: Inline: re-check expansion order"
 replaceStmt _ s=s
 
@@ -421,6 +425,7 @@ checkStmt ((Delete n):xs) rs=do
     unless (S.member n rs) $ report $ "deleting unallocated register "++n
     checkStmt xs $ S.delete n rs
 checkStmt ((Move p ps):xs) rs=mapM_ (\x->within "move" $ checkPointer x rs) (p:ps) >> checkStmt xs rs
+checkStmt ((Copy p ps):xs) rs=mapM_ (\x->within "copy" $ checkPointer x rs) (p:ps) >> checkStmt xs rs
 checkStmt ((Val p _):xs) rs=within "val" (checkPointer p rs) >> checkStmt xs rs
 checkStmt ((Clear p):xs) rs=within "clear" (checkPointer p rs) >> checkStmt xs rs
 checkStmt ((Inline name ns):xs) rs=do
@@ -438,14 +443,11 @@ checkPointer _ rs=return ()
 
 -- | Interpreter of 'SAM', usable for all phases.
 interpret :: SAM -> IO ()
-interpret s@(SAM rs procs)=do
-    runProcessWithIO (const $ return ()) $ checkSAM "SAMi" s
-    let
-        ptb0=M.fromList $ map (procName &&& id) procs
-        mtb0=(M.fromList $ zip rs $ repeat minit)
-        st0=SAMInternal ptb0 mtb0 M.empty 0
-    
-    evalStateT (enterProc "^" []) st0
+interpret=runProcessWithIO f . checkSAM "SAMi"
+    where f (SAM rs procs)=let ptb0=M.fromList $ map (procName &&& id) procs
+                               mtb0=(M.fromList $ zip rs $ repeat minit)
+                               st0=SAMInternal ptb0 mtb0 M.empty 0
+                           in evalStateT (enterProc "^" []) st0
 
 data SAMInternal=SAMInternal
     {procTable :: M.Map ProcName SProc
@@ -519,6 +521,8 @@ execStmt p s0@(While ptr ss)=do
     when (x/=0) $ execStmts p ss >> execStmt p s0
 execStmt p (Move ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
     where f (x:xs)=0:map (+x) xs
+execStmt p (Copy ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
+    where f (x:xs)=x:map (+x) xs
 execStmt p (Locate d)=modifyPointer (+d)
 execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
