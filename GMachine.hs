@@ -64,6 +64,7 @@ compile m
         hs=["H0"]
 
 
+-- | Compile a sequence of 'GMCode's to a procedure. 1->1
 compileCodeBlock :: String -> [GMCode] -> SProc
 compileCodeBlock name cs=SProc ("!"++name) [] $ map (flip Inline [] . compileName) cs
 
@@ -74,11 +75,36 @@ compileName (PushSC k)="%PushSC_"++k
 compileName (Pack t n)="%Pack_"++show t++"_"++show n
 compileName (Slide n)="%Slide_"++show n
 compileName (PushArg n)="%PushArg_"++show n
+compileName (PushByte x)="%PushByte_"++show x
+
+
+
 
 
 -- | Compile a single 'GMCode' to a procedure. 1->1
 compileCode :: M.Map String Int -> GMCode -> SProc
 compileCode m c=SProc (compileName c) [] $ case c of
+    PushByte x -> -- [5,constTag,x,id,5]
+        [SAM.Alloc "temp"
+        ,Inline "#heapNew" ["temp"]
+        ,Clear (Memory "H0" 3)
+        ,SAM.Alloc "addr"
+        ,Move (Register "temp") [Memory "H0" 3,Register "addr"]
+        ,Delete "temp"
+        ,Clear (Memory "H0" 1)
+        ,Clear (Memory "H0" 2)
+        ,Clear (Memory "H0" 4)
+        ,Val (Memory "H0" 0) 5
+        ,Val (Memory "H0" 1) scTag
+        ,Val (Memory "H0" 2) x
+        ,Val (Memory "H0" 4) 5
+        ,Clear (Memory "H0" 5) -- next frame
+        ,Inline "#heap1" []
+        ,Inline "#stackNew" []
+        ,Move (Register "addr") [Memory "S0" 0]
+        ,Delete "addr"
+        ,Inline "#stack1" []
+        ]
     PushSC k -> -- [5,scTag,sc,id,5]
         [SAM.Alloc "temp"
         ,Inline "#heapNew" ["temp"]
@@ -153,6 +179,7 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Delete "arg"
         ,Inline "#stack1" []
         ]
+    
     where
         st2heap ix= -- applicable for Pack, App
             [Inline "#heap1" []
@@ -438,7 +465,6 @@ data GMCode
     |Pack Int Int
     |Casejump [(Int,GMCode)]
     |Split Int
-    |MkByte Int
     deriving(Show,Eq,Ord)
 
 
@@ -495,7 +521,7 @@ aux []=do
         Struct 0 [f] -> do
             pop
             x<-liftIO (liftM ord getChar)
-            evalGM (MkByte x) >> push f >> evalGM MkApp
+            evalGM (PushByte x) >> push f >> evalGM MkApp
             aux []
         Struct 1 [x,k] -> do
             pop
@@ -581,7 +607,7 @@ evalGM (Slide n)=do
     x<-pop
     popn n
     push x
-evalGM (MkByte x)=alloc (Const x) >>= push
+evalGM (PushByte x)=alloc (Const x) >>= push
 evalGM x=error $ "evalGM: unsupported: "++show x
 
 
