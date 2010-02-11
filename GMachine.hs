@@ -79,77 +79,61 @@ compileName (PushByte x)="%PushByte_"++show x
 
 
 
+-- requirement: HF*
+newFrame :: Int -> [Int] -> (Pointer -> [Stmt]) -> [Stmt]
+newFrame tag xs post=
+    [SAM.Alloc "addr"
+    ,Inline "#heapNew" ["addr"]
+    ,Clear (Memory "H0" $ size-2)
+    ,Move (Register "addr") [Memory "H0" $ size-2]
+    ,Delete "addr"
+    ,Val (Memory "H0" 0) size
+    ,Clear (Memory "H0" 1),Val (Memory "H0" 1) tag
+    ]++
+    concatMap set (zip [2..] xs)++
+    [Clear (Memory "H0" $ size-1),Val (Memory "H0" $ size-1) size
+    ,Clear (Memory "H0" size) -- next frame
+    ]++
+    post (Memory "H0" $ size-2)
+    where
+        size=4+length xs
+        set (ix,v)=[Clear (Memory "H0" ix),Val (Memory "H0" ix) v]
 
 
 -- | Compile a single 'GMCode' to a procedure. 1->1
 compileCode :: M.Map String Int -> GMCode -> SProc
 compileCode m c=SProc (compileName c) [] $ case c of
-    PushByte x -> -- [5,constTag,x,id,5]
-        [SAM.Alloc "temp"
-        ,Inline "#heapNew" ["temp"]
-        ,Clear (Memory "H0" 3)
-        ,SAM.Alloc "addr"
-        ,Move (Register "temp") [Memory "H0" 3,Register "addr"]
-        ,Delete "temp"
-        ,Clear (Memory "H0" 1)
-        ,Clear (Memory "H0" 2)
-        ,Clear (Memory "H0" 4)
-        ,Val (Memory "H0" 0) 5
-        ,Val (Memory "H0" 1) scTag
-        ,Val (Memory "H0" 2) x
-        ,Val (Memory "H0" 4) 5
-        ,Clear (Memory "H0" 5) -- next frame
-        ,Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ,Move (Register "addr") [Memory "S0" 0]
-        ,Delete "addr"
-        ,Inline "#stack1" []
-        ]
-    PushSC k -> -- [5,scTag,sc,id,5]
-        [SAM.Alloc "temp"
-        ,Inline "#heapNew" ["temp"]
-        ,Clear (Memory "H0" 3)
-        ,SAM.Alloc "addr"
-        ,Move (Register "temp") [Memory "H0" 3,Register "addr"]
-        ,Delete "temp"
-        ,Clear (Memory "H0" 1)
-        ,Clear (Memory "H0" 2)
-        ,Clear (Memory "H0" 4)
-        ,Val (Memory "H0" 0) 5
-        ,Val (Memory "H0" 1) scTag
-        ,Val (Memory "H0" 2) $ m M.! k
-        ,Val (Memory "H0" 4) 5
-        ,Clear (Memory "H0" 5) -- next frame
-        ,Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ,Move (Register "addr") [Memory "S0" 0]
-        ,Delete "addr"
-        ,Inline "#stack1" []
-        ]
-    MkApp -> -- [6,appTag,ap0,ap1,id,6]
+    PushByte x -> -- constTag x
+        newFrame constTag [x] $ \pa->
         [SAM.Alloc "addr"
-        ,Inline "#heapNew" ["addr"]
-        ,Clear (Memory "H0" 4)
-        ,Copy (Register "addr") [Memory "H0" 4]
-        ,Val (Memory "H0" 0) 6 -- size
-        ,Clear (Memory "H0" 1),Val (Memory "H0" 1) appTag
-        ,Clear (Memory "H0" 5),Val (Memory "H0" 5) 6 -- size
-        ,Clear (Memory "H0" 6) -- new frame
+        ,Copy pa [Register "addr"]
+        ,Inline "#heap1" []
+        ,Inline "#stackNew" []
+        ,Move (Register "addr") [Memory "S0" 0]
+        ,Delete "addr"
+        ,Inline "#stack1" []
+        ]
+    PushSC k -> -- scTag sc
+        newFrame scTag [m M.! k] $ \pa->
+        [SAM.Alloc "addr"
+        ,Copy pa [Register "addr"]
+        ,Inline "#heap1" []
+        ,Inline "#stackNew" []
+        ,Move (Register "addr") [Memory "S0" 0]
+        ,Delete "addr"
+        ,Inline "#stack1" []
+        ]
+    MkApp -> -- appTag ap0 ap1
+        newFrame appTag [0,0] $ \pa->
+        [SAM.Alloc "addr"
+        ,Copy pa [Register "addr"]
         ]++
         concatMap st2heap [2,1]++
         heap2st
-    Pack t n -> -- [5+n,stTag,t...id,5+n]
-        [SAM.Alloc "temp"
-        ,Inline "#heapNew" ["temp"]
-        ,Clear (Memory "H0" $ 3+n)
-        ,SAM.Alloc "addr"
-        ,Move (Register "temp") [Memory "H0" $ 3+n,Register "addr"]
-        ,Delete "temp"
-        ,Val (Memory "H0" 0) $ 5+n -- size
-        ,Clear (Memory "H0" 1),Val (Memory "H0" 1) structTag -- frame tag
-        ,Clear (Memory "H0" 2),Val (Memory "H0" 2) t -- struct tag
-        ,Clear (Memory "H0" $ 4+n),Val (Memory "H0" $ 4+n) $ 5+n -- size
-        ,Clear (Memory "H0" $ 5+n) -- new frame
+    Pack t n -> -- stTag t x1...xn
+        newFrame structTag (t:replicate n 0) $ \pa->
+        [SAM.Alloc "addr"
+        ,Copy pa [Register "addr"]
         ]++
         concatMap st2heap (reverse $ [1..n])++ -- pack struct members from back to front
         heap2st
@@ -190,7 +174,6 @@ compileCode m c=SProc (compileName c) [] $ case c of
             ,Locate (-1)
             ,Inline "#stack1" []
             ,Inline "#heapNew_" []
-            ,Clear (Memory "H0" $ negate $ 2+ix)
             ,Move (Register "temp") [Memory "H0" $ negate $ 2+ix]
             ,Delete "temp"
             ]
