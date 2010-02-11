@@ -47,14 +47,14 @@ compile m
     |codeSpace>1          = error "GM->SAM: 255+ super combinator is not supported"
     |heapSpace>1          = error "GM->SAM: 2+ byte addresses are not supported"
     |M.notMember "main" m = error "GM->SAM: entry point not found"
-    |otherwise            = return $ SAM (ss++hs) (lib++cmd++prc++loop)
+    |otherwise            = return $ SAM (ss++hs) (lib++prc++loop)
     where
         t=M.fromList $ ("main",2):zip (filter (/="main") $ M.keys m) [3..]
         
         -- code generation
         lib=[stack1,heap1,heapNew,heapNew_,heapRef,stackNew]
-        cmd=map (compileCode t) $ nub $ concat $ M.elems m
-        prc=map (uncurry compileCodeBlock) $ M.assocs m
+--        cmd=map (compileCode t) $ nub $ concat $ M.elems m
+        prc=map (uncurry $ compileCodeBlock t) $ M.assocs m
         loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalE,exec $ M.assocs t]
         
         -- layout configuration
@@ -64,9 +64,24 @@ compile m
         hs=["H0"]
 
 
+
+data MPos
+    =HeapA
+    |StackA
+    deriving(Show,Eq)
+
 -- | Compile a sequence of 'GMCode's to a procedure. 1->1
-compileCodeBlock :: String -> [GMCode] -> SProc
-compileCodeBlock name cs=SProc ("!"++name) [] $ map (flip Inline [] . compileName) cs
+compileCodeBlock :: M.Map String Int -> String -> [GMCode] -> SProc
+compileCodeBlock m name cs=SProc ("!"++name) [] $ -- map (flip Inline [] . compileName) cs
+    concat $ zipWith (++) (map (compileCode m) cs) (map genTrans needOrg)
+    where
+        genTrans Nothing=[]
+        genTrans (Just HeapA)=[Inline "#heap1" []]
+        genTrans (Just StackA)=[Inline "#stack1" []]
+        needOrg=zipWith (\x y->if x/=y then Just x else Nothing) (map snd fbs) (map fst $ tail fbs)++
+               [Just $ snd $ last fbs]
+        fbs=map fbPos cs
+    
 
 
 compileName :: GMCode -> String
@@ -76,6 +91,16 @@ compileName (Pack t n)="%Pack_"++show t++"_"++show n
 compileName (Slide n)="%Slide_"++show n
 compileName (PushArg n)="%PushArg_"++show n
 compileName (PushByte x)="%PushByte_"++show x
+
+
+
+fbPos :: GMCode -> (MPos,MPos)
+fbPos (PushByte _)=(HeapA,StackA)
+fbPos (PushSC _)=(HeapA,StackA)
+fbPos (MkApp)=(HeapA,StackA)
+fbPos (Pack _ _)=(HeapA,StackA)
+fbPos (Slide _)=(StackA,StackA)
+fbPos (PushArg _)=(StackA,StackA)
 
 
 
@@ -100,9 +125,9 @@ newFrame tag xs post=
         set (ix,v)=[Clear (Memory "H0" ix),Val (Memory "H0" ix) v]
 
 
--- | Compile a single 'GMCode' to a procedure. 1->1
-compileCode :: M.Map String Int -> GMCode -> SProc
-compileCode m c=SProc (compileName c) [] $ case c of
+-- | Compile a single 'GMCode' to a procedure. StackA|HeapA -> StackA|HeapA
+compileCode :: M.Map String Int -> GMCode -> [Stmt]
+compileCode m c=case c of
     PushByte x -> -- constTag x
         newFrame constTag [x] $ \pa->
         [SAM.Alloc "addr"
@@ -111,7 +136,6 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Inline "#stackNew" []
         ,Move (Register "addr") [Memory "S0" 0]
         ,Delete "addr"
-        ,Inline "#stack1" []
         ]
     PushSC k -> -- scTag sc
         newFrame scTag [m M.! k] $ \pa->
@@ -121,7 +145,6 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Inline "#stackNew" []
         ,Move (Register "addr") [Memory "S0" 0]
         ,Delete "addr"
-        ,Inline "#stack1" []
         ]
     MkApp -> -- appTag ap0 ap1
         newFrame appTag [0,0] $ \pa->
@@ -145,7 +168,6 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ]++
         map (Clear . Memory "S0" . negate) [1..n-1]++
         [Locate $ negate n
-        ,Inline "#stack1" []
         ]
     PushArg n ->
         [Inline "#stackNew" []
@@ -161,9 +183,7 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Inline "#stackNew" []
         ,Move (Register "arg") [Memory "S0" 0]
         ,Delete "arg"
-        ,Inline "#stack1" []
         ]
-    
     where
         st2heap ix= -- applicable for Pack, App
             [Inline "#heap1" []
@@ -182,7 +202,6 @@ compileCode m c=SProc (compileName c) [] $ case c of
             ,Inline "#stackNew" []
             ,Move (Register "addr") [Memory "S0" 0]
             ,Delete "addr"
-            ,Inline "#stack1" []
             ]
 
     
