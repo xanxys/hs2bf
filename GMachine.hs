@@ -139,10 +139,18 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ]
     PushArg n ->
         [Inline "#stackNew" []
-        ,SAM.Alloc "temp"
-        ,Move (Memory "S0" $ negate $ n+1) [Memory "S0" 0,Register "temp"]
-        ,Move (Register "temp") [Memory "S0" $ negate $ n+1]
-        ,Delete "temp"
+        ,Locate (-1)
+        ,SAM.Alloc "aaddr"
+        ,Copy (Memory "S0" $ negate n) [Register "aaddr"]
+        ,Inline "#stack1" []
+        ,Inline "#heapRef" ["aaddr"]
+        ,Delete "aaddr"
+        ,SAM.Alloc "arg"
+        ,Copy (Memory "H0" 3) [Register "arg"]
+        ,Inline "#heap1" []
+        ,Inline "#stackNew" []
+        ,Move (Register "arg") [Memory "S0" 0]
+        ,Delete "arg"
         ,Inline "#stack1" []
         ]
     where
@@ -288,8 +296,24 @@ evalE=SProc "%evalE" ["sc"]
             ,Delete "aaddr"
             ,Inline "#stack1" []
             ])
-        ,(1, -- output x k
-            [Inline "#heap1" []
+        ,(1, -- output x k [7,structTag,1,X,K,addr,7]
+            [SAM.Alloc "xaddr"
+            ,SAM.Alloc "kaddr"
+            ,Copy (Memory "H0" 3) [Register "xaddr"]
+            ,Copy (Memory "H0" 4) [Register "kaddr"]
+            -- refer and output x
+            ,Inline "#heap1" []
+            ,Inline "#heapRef" ["xaddr"]
+            ,Delete "xaddr"
+            ,Output (Memory "H0" 2)
+            -- replace stack top
+            ,Inline "#heap1" []
+            ,Inline "#stackNew" []
+            ,Locate (-1)
+            ,Clear (Memory "S0" 0)
+            ,Move (Register "kaddr") [Memory "S0" 0]
+            ,Delete "kaddr"
+            ,Inline "#stack1" []
             ])
         ,(2, -- halt
             [Val (Register "sc") (-1) -- sc:=0
@@ -547,8 +571,7 @@ evalGM (PushArg n)=do
     push arg
 evalGM MkApp=do
     [s0,s1]<-popn 2
-    n<-alloc (App s0 s1)
-    push n
+    alloc (App s0 s1) >>= push
 evalGM (Pack t n)=do
     ss<-popn n
     alloc (Struct t ss) >>= push

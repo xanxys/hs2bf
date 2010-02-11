@@ -56,7 +56,8 @@ soptBF xs=case head xs of
     BFVInc -> sovAux 0 xs
     BFVDec -> sovAux 0 xs
     BFLoop s -> BFLoop (soptBF s):xs'
-    _ -> BFInput:xs'
+    BFInput -> BFInput:xs'
+    BFOutput -> BFOutput:xs'
     where xs'=soptBF $ tail xs
 
 sopAux n (BFPInc:xs)=sopAux (n+1) xs
@@ -525,7 +526,7 @@ dumpRegisterP proc (m0,m1)=unlines $ ("in "++proc++":"):rs
            (map (\(n,a)->"  "++n++" -> "++show a) $ M.assocs m1)
 
     
-execStmts p=mapM_ (\x->execStmt p x >> liftIO (putStrLn (p++" "++show x)) >> dumpRegisters >> dumpMemory >> liftIO (putStrLn ""))
+execStmts p=mapM_ (\x->execStmt p x >> liftIO (putStrLn (p++" "++(take 50 $ show x))) >> dumpRegisters >> dumpMemory >> liftIO (putStrLn ""))
 
 execStmt p (Alloc r)=modifyRT $ M.adjust (first $ M.insert r 0) p
 execStmt p (Delete r)=modifyRT $ M.adjust (first $ M.delete r) p
@@ -543,7 +544,7 @@ execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
     writePtr p (Register r) 0
     let caluse=lookup (fromIntegral x) cs
-    maybe (error $ "SAMi: unhandled value in dispatch: "++show (x,p,r)) (mapM_ $ execStmt p) caluse
+    maybe (error $ "SAMi: unhandled value in dispatch: "++show (x,p,r)) (execStmts p) caluse
 execStmt p (Clear ptr)=writePtr p ptr 0
 execStmt p (Input ptr)=liftIO getChar >>= writePtr p ptr . fromIntegral . ord
 execStmt p (Output ptr)=readPtr p ptr >>= liftIO . putChar . chr . fromIntegral
