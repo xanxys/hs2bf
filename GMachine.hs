@@ -49,13 +49,13 @@ compile m
     |M.notMember "main" m = error "GM->SAM: entry point not found"
     |otherwise            = return $ SAM (ss++hs) (lib++cmd++prc++loop)
     where
-        t=M.fromList $ ("main",1):zip (filter (/="main") $ M.keys m) [2..]
+        t=M.fromList $ ("main",2):zip (filter (/="main") $ M.keys m) [3..]
         
         -- code generation
         lib=[stack1,heap1,heapNew,heapNew_,heapRef,stackNew]
         cmd=map (compileCode t) $ nub $ concat $ M.elems m
         prc=map (uncurry compileCodeBlock) $ M.assocs m
-        loop=[rootProc,setupMemory,mainLoop,eval,exec $ M.assocs t]
+        loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalE,exec $ M.assocs t]
         
         -- layout configuration
         codeSpace=ceiling $ log (fromIntegral $ M.size m+1)/log 256
@@ -69,10 +69,12 @@ compileCodeBlock name cs=SProc ("!"++name) [] $ map (flip Inline [] . compileNam
 
 
 compileName :: GMCode -> String
+compileName MkApp="%MkApp"
 compileName (PushSC k)="%PushSC_"++k
 compileName (Pack t n)="%Pack_"++show t++"_"++show n
-compileName (Slide n) ="%Slide_"++show n
-compileName (PushArg n)  ="%PushArg_"++show n
+compileName (Slide n)="%Slide_"++show n
+compileName (PushArg n)="%PushArg_"++show n
+
 
 -- | Compile a single 'GMCode' to a procedure. 1->1
 compileCode :: M.Map String Int -> GMCode -> SProc
@@ -98,6 +100,18 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Delete "addr"
         ,Inline "#stack1" []
         ]
+    MkApp -> -- [6,appTag,ap0,ap1,id,6]
+        [SAM.Alloc "addr"
+        ,Inline "#heapNew" ["addr"]
+        ,Clear (Memory "H0" 4)
+        ,Copy (Register "addr") [Memory "H0" 4]
+        ,Val (Memory "H0" 0) 6 -- size
+        ,Clear (Memory "H0" 1),Val (Memory "H0" 1) appTag
+        ,Clear (Memory "H0" 5),Val (Memory "H0" 5) 6 -- size
+        ,Clear (Memory "H0" 6) -- new frame
+        ]++
+        concatMap st2heap [2,1]++
+        heap2st
     Pack t n -> -- [5+n,stTag,t...id,5+n]
         [SAM.Alloc "temp"
         ,Inline "#heapNew" ["temp"]
@@ -111,32 +125,18 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Clear (Memory "H0" $ 4+n),Val (Memory "H0" $ 4+n) $ 5+n -- size
         ,Clear (Memory "H0" $ 5+n) -- new frame
         ]++
-        concatMap st2heap (reverse [1..n])++ -- pack struct members from back to front
-        [Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ,Move (Register "addr") [Memory "S0" 0]
-        ,Delete "addr"
-        ,Inline "#stack1" []
-        ]
-        where st2heap ix=[Inline "#heap1" []
-                         ,Inline "#stackNew" []
-                         ,Locate (-1)
-                         ,SAM.Alloc "temp"
-                         ,Move (Memory "S0" 0) [Register "temp"]
-                         ,Inline "#stack1" []
-                         ,Inline "#heapNew_" []
-                         ,Clear (Memory "H0" $ negate $ 1+ix)
-                         ,Move (Register "temp") [Memory "H0" $ negate $ 1+ix]
-                         ,Delete "temp"
-                         ]
+        concatMap st2heap (reverse $ [1..n])++ -- pack struct members from back to front
+        heap2st
     Slide n ->
         [Inline "#stackNew" []
         ,Locate (-1)
         ,Clear (Memory "S0" $ negate n)
         ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
+        ]++
+        map (Clear . Memory "S0" . negate) [1..n-1]++
+        [Locate $ negate n
+        ,Inline "#stack1" []
         ]
-        ++map (Clear . Memory "S0" . negate) [1..n-1]
-        ++[Locate $ negate n]
     PushArg n ->
         [Inline "#stackNew" []
         ,SAM.Alloc "temp"
@@ -145,6 +145,27 @@ compileCode m c=SProc (compileName c) [] $ case c of
         ,Delete "temp"
         ,Inline "#stack1" []
         ]
+    where
+        st2heap ix= -- applicable for Pack, App
+            [Inline "#heap1" []
+            ,Inline "#stackNew" []
+            ,Locate (-1)
+            ,SAM.Alloc "temp"
+            ,Move (Memory "S0" 0) [Register "temp"]
+            ,Locate (-1)
+            ,Inline "#stack1" []
+            ,Inline "#heapNew_" []
+            ,Clear (Memory "H0" $ negate $ 2+ix)
+            ,Move (Register "temp") [Memory "H0" $ negate $ 2+ix]
+            ,Delete "temp"
+            ]
+        heap2st= -- use this right after st2heap to push newly created pointer
+            [Inline "#heap1" []
+            ,Inline "#stackNew" []
+            ,Move (Register "addr") [Memory "S0" 0]
+            ,Delete "addr"
+            ,Inline "#stack1" []
+            ]
 
     
 appTag=0
@@ -171,12 +192,12 @@ setupMemory=SProc "%setupMemory" []
     ,Val (Memory "H0" 3) 1 -- frame addr
     ,Val (Memory "H0" 4) 5 -- frame size
     ]
-    where sc=1
+    where sc=2 -- main
 
 mainLoop :: SProc
 mainLoop=SProc "%mainLoop" []
-    [SAM.Alloc "sc"
-    ,Val (Register "sc") 1 -- any non-zero number will do
+    [SAM.Alloc "sc" -- 0:halt 1:cont-eval *:exec
+    ,Val (Register "sc") 1
     ,While (Register "sc")
         [Inline "%eval" ["sc"]
         ,Inline "%exec" ["sc"]
@@ -184,7 +205,13 @@ mainLoop=SProc "%mainLoop" []
     ,Delete "sc"
     ]
 
--- | Eval. Must be on address 1.
+-- | Eval. Must be on address 1. /sc/ must be 1 on entry.
+--
+-- * halt: sc:=0
+--
+-- * eval: sc:=1
+--
+-- * exec: sc:=2-255
 eval :: SProc
 eval=SProc "%eval" ["sc"]
     [Inline "#stack1" []
@@ -198,42 +225,96 @@ eval=SProc "%eval" ["sc"]
     ,SAM.Alloc "tag"
     ,Copy (Memory "H0" 1) [Register "tag"]
     ,Dispatch "tag"
-        [(scTag,
-            [Clear (Register "sc")
-            ,Copy (Memory "H0" 2) [Register "sc"]
-            ,Inline "#heap1" []
-            ])
-        ,(structTag,
-            [SAM.Alloc "stag"
-            ,Copy (Memory "H0" 2) [Register "stag"]
-            ,Dispatch "stag"
-                [(0, -- input f
-                    [Inline "#heap1" []
-                    ])
-                ,(1, -- output x k
-                    [Inline "#heap1" []
-                    ])
-                ,(2, -- halt
-                    [Clear (Register "sc")
-                    ,Inline "#heap1" []
-                    ,Inline "#stackNew" []
-                    ,Clear (Memory "S0" (-1))
-                    ,Locate (-1)
-                    ])
-                ]
-            ,Delete "stag"
-            ])
+        [(appTag,[Inline "%evalApp" []])
+        ,(scTag,[Inline "%evalSC" ["sc"]])
+        ,(constTag,[])
+        ,(structTag,[Inline "%evalE" ["sc"]])
         ]
     ,Delete "tag"
     ]
 
--- | Must be on address 1.
+evalApp=SProc "%evalApp" []
+    [SAM.Alloc "addr"
+    ,Copy (Memory "H0" 2) [Register "addr"]
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Move (Register "addr") [Memory "S0" 0]
+    ,Delete "addr"
+    ,Inline "#stack1" []
+    ]
+
+evalSC=SProc "%evalSC" ["sc"]
+    [Val (Register "sc") (-1)
+    ,Copy (Memory "H0" 2) [Register "sc"]
+    ,Inline "#heap1" []
+    ]
+
+evalE=SProc "%evalE" ["sc"]
+    [SAM.Alloc "stag"
+    ,Copy (Memory "H0" 2) [Register "stag"]
+    ,Dispatch "stag"
+        [(0, -- input f
+            [SAM.Alloc "faddr"
+            ,Copy (Memory "H0" 3) [Register "faddr"]
+            -- construct app frame: [6,appTag,f,aaddr+1,aaddr,6]
+            ,SAM.Alloc "aaddr"
+            ,Inline "#heapNew" ["aaddr"]
+            ,Val (Memory "H0" 0) 6
+            ,Clear (Memory "H0" 1),Val (Memory "H0" 1) appTag
+            ,Clear (Memory "H0" 2),Move (Register "faddr") [Memory "H0" 2]
+            ,Delete "faddr"
+            ,Clear (Memory "H0" 3),Clear (Memory "H0" 4),Clear (Memory "H0" 5)
+            ,Copy (Register "aaddr") [Memory "H0" 3,Memory "H0" 4]
+            ,Val (Memory "H0" 3) 1
+            ,Val (Memory "H0" 5) 6
+            ,Clear (Memory "H0" 6) -- mark new frame
+            -- construct const frame: [5,constTag,input,aaddr+1,5]
+            ,Locate 6
+            ,Clear (Memory "H0" 1)
+            ,Clear (Memory "H0" 3)
+            ,Clear (Memory "H0" 4)
+            ,Val (Memory "H0" 0) 5
+            ,Val (Memory "H0" 1) constTag
+            ,Copy (Register "aaddr") [Memory "H0" 3],Val (Memory "H0" 3) 1
+            ,Val (Memory "H0" 4) 5
+            ,Input (Memory "H0" 2)
+            ,Clear (Memory "H0" 5) -- mark new frame
+            -- pop and push aaddr
+            ,Inline "#heap1" []
+            ,Inline "#stackNew" []
+            ,Locate (-1)
+            ,Clear (Memory "S0" 0)
+            ,Move (Register "aaddr") [Memory "S0" 0]
+            ,Delete "aaddr"
+            ,Inline "#stack1" []
+            ])
+        ,(1, -- output x k
+            [Inline "#heap1" []
+            ])
+        ,(2, -- halt
+            [Val (Register "sc") (-1) -- sc:=0
+            ,Inline "#heap1" []
+            ,Inline "#stackNew" []
+            ,Clear (Memory "S0" (-1))
+            ,Locate (-1)
+            ])
+        ]
+    ,Delete "stag"
+    ]
+
+-- | Must be on address 1. /sc/ will be 1 or 0.
 exec :: [(String,Int)] -> SProc
 exec xs=SProc "%exec" ["sc"]
-    [SAM.Alloc "temp"
-    ,Copy (Register "sc") [Register "temp"]
-    ,Dispatch "temp" $ (0,[]):map f xs
-    ,Delete "temp"
+    [SAM.Alloc "cont"
+    ,While (Register "sc")
+        [Dispatch "sc" $ (1,[]):map f xs
+        ,Val (Register "cont") 1
+        ]
+    ,While (Register "cont")
+        [Val (Register "sc") 1
+        ,Val (Register "cont") (-1)
+        ]
+    ,Delete "cont"
     ]
     where f (str,n)=(n,[Inline ("!"++str) []])
 
@@ -315,7 +396,11 @@ stackNew=SProc "#stackNew" []
 
 
 
-
+-- | G-machine intstruction
+--
+-- Note1: 'MkApp' 'Pack' ordering: first pushed -> last packed
+--
+-- Note2: 'PushArg' counts from top=0
 data GMCode
     =Slide Int -- ^ pop 1st...nth items
     |Alloc Int
@@ -461,7 +546,7 @@ evalGM (PushArg n)=do
     App _ arg<-refStack n >>= refHeap
     push arg
 evalGM MkApp=do
-    [s0,s1]<-popn 2 
+    [s0,s1]<-popn 2
     n<-alloc (App s0 s1)
     push n
 evalGM (Pack t n)=do

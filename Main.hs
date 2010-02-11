@@ -131,6 +131,7 @@ help=unlines $
     ,"  -Sc : to Core code"
     ,"  -Sm : to GMachine"
     ,"  -Ss : to SAM"
+    ,"  -Ssf: to SAM (most simplified)"
     ,"  -Sg : to SCGR"
     ,"  -Sb : to BF"
     ,"  --addr n : use n byte for pointer arithmetic"

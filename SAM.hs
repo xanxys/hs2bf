@@ -492,6 +492,7 @@ enterProc name args=do
     modify (\x->x{regTable=rtb'})
     execStmts name ss
     modify (\x->x{regTable=M.delete name $ regTable x})
+    liftIO $ putStrLn $ "leaving:"++name
 
 dumpMemory :: SAMST IO ()
 dumpMemory=do
@@ -540,9 +541,12 @@ execStmt p (Copy ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->wr
 execStmt p (Locate d)=modifyPointer (+d)
 execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
+    writePtr p (Register r) 0
     let caluse=lookup (fromIntegral x) cs
     maybe (error $ "SAMi: unhandled value in dispatch: "++show (x,p,r)) (mapM_ $ execStmt p) caluse
 execStmt p (Clear ptr)=writePtr p ptr 0
+execStmt p (Input ptr)=liftIO getChar >>= writePtr p ptr . fromIntegral . ord
+execStmt p (Output ptr)=readPtr p ptr >>= liftIO . putChar . chr . fromIntegral
     
     
     
