@@ -11,7 +11,6 @@ import Data.List
 import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
-import System.IO
 
 import Util as U hiding(Pack)
 import qualified Util as U
@@ -366,10 +365,7 @@ newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()
-interpretGM fs=do
-    hSetBuffering stdin NoBuffering
-    hSetBuffering stdout NoBuffering
-    evalStateT (exec []) (makeEmptySt "main")
+interpretGM fs=evalStateT (exec []) (makeEmptySt "main")
     where exec code=aux code >>= maybe (return ()) (exec . (fs M.!))
 
 makeEmptySt :: String -> GMInternal

@@ -14,6 +14,7 @@ module Main where
 import Control.Monad
 import System.Environment
 import System.FilePath.Posix
+import System.IO
 
 import Util
 import qualified Front
@@ -85,6 +86,9 @@ execCommand (Interpret opt from)=do
         sam =gm   >>= GMachine.compile
         sam'=sam  >>= SAM.simplify
         bf  =sam' >>= SAM.compile
+    -- byte stream
+    hSetBuffering stdin NoBuffering
+    hSetBuffering stdout NoBuffering
     case tolang opt of
         LangCore _ -> error "Core interpreter is not implemented"
         LangGMachine -> capProcess gm GMachine.interpretGM
