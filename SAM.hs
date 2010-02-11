@@ -73,7 +73,10 @@ compileS (While (Memory _ d) ss)=concat
     ,[BFLoop $ concat [dP (negate d),concatMap compileS ss,dP d]]
     ,dP (negate d)]
 compileS (Val (Memory _ d) v)=concat [dP d,dV v,dP $ negate d]
+compileS (Input (Memory _ d))=dP d++[BFInput]++dP (negate d)
+compileS (Output (Memory _ d))=dP d++[BFOutput]++dP (negate d)
 compileS (Locate d)=dP d
+
 
 dP x=replicateZ x BFPDec BFPInc
 dV x=replicateZ x BFVDec BFVInc
@@ -111,6 +114,8 @@ foldMS n m (Move p ps)=Move (foldMP n m p) (map (foldMP n m) ps)
 foldMS n m (While p ss)=While (foldMP n m p) (map (foldMS n m) ss)
 foldMS n m (Val p d)=Val (foldMP n m p) d
 foldMS n m (Locate d)=Locate $ n*d
+foldMS n m (Input p)=Input (foldMP n m p)
+foldMS n m (Output p)=Output (foldMP n m p)
 
 foldMP n m (Memory r x)=Memory "" $ (fromJust $ elemIndex r m)+x*n
 
@@ -135,6 +140,8 @@ allocateRS rs (While p ss)
     |otherwise   = error "allocateRS: unmatched register scope in while"
     where (rs',sss)=mapAccumL allocateRS rs ss
 allocateRS rs (Val p d)=(rs,[Val (allocateRP rs p) d])
+allocateRS rs (Input p)=(rs,[Input (allocateRP rs p)])
+allocateRS rs (Output p)=(rs,[Output (allocateRP rs p)])
 {-
 allocateRS rs (Locate d)
     |d/=0 = (rs',mv++[Locate d])
@@ -245,6 +252,8 @@ data Stmt
     |Clear Pointer -- ^ syntax sugar of Move p []
     |Dispatch RegName [(Int,[Stmt])] -- ^ in case alts, given RegName will be out of scope. This instruction is erratic in many ways...
     |Inline ProcName [RegName]
+    |Input Pointer
+    |Output Pointer
     deriving(Show)
 
 data Pointer
@@ -295,7 +304,8 @@ pprintStmt (Copy d ss)=Line $ Span $ Prim "copy":map (Prim . show) (d:ss)
 pprintStmt (Locate n)=Line $ Span [Prim "locate",Prim $ show n]
 pprintStmt (Inline n rs)=Line $ Span $ map Prim ("inline":n:rs)
 pprintStmt (Clear r)=Line $ Span [Prim "clear",Prim $ show r]
--- pprintStmt x=error $ "pprintStmt:"++show x
+pprintStmt (Input p)=Line $ Span [Prim "in",Prim $ show p]
+pprintStmt (Output p)=Line $ Span [Prim "out",Prim $ show p]
 
 
 pprintCase :: (Int,[Stmt]) -> StrBlock
@@ -362,6 +372,8 @@ replaceStmt f (Clear p)=Clear $ replacePtr f p
 replaceStmt f (Move p ps)=Move (replacePtr f p) (map (replacePtr f) ps)
 replaceStmt f (Copy p ps)=Copy (replacePtr f p) (map (replacePtr f) ps)
 replaceStmt f (Inline n ss)=error "replaceStmt: Inline: re-check expansion order"
+replaceStmt f (Input p)=Input (replacePtr f p)
+replaceStmt f (Output p)=Output (replacePtr f p)
 replaceStmt _ s=s
 
 replacePtr :: (RegName -> RegName) -> Pointer -> Pointer
@@ -432,6 +444,8 @@ checkStmt ((Inline name ns):xs) rs=do
     let s=S.fromList ns
     unless (s `S.isSubsetOf` rs) $ within ("inline "++name) $ report $ "unknown registers: " ++unwords (S.toList $s S.\\ rs)
     checkStmt xs rs
+checkStmt ((Input p):xs) rs=within "input" (checkPointer p rs) >> checkStmt xs rs
+checkStmt ((Output p):xs) rs=within "output" (checkPointer p rs) >> checkStmt xs rs
 checkStmt (_:xs) rs=checkStmt xs rs
 
 
@@ -521,8 +535,8 @@ execStmt p s0@(While ptr ss)=do
     when (x/=0) $ execStmts p ss >> execStmt p s0
 execStmt p (Move ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
     where f (x:xs)=0:map (+x) xs
-execStmt p (Copy ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) (ptr:ptrs) . f
-    where f (x:xs)=x:map (+x) xs
+execStmt p (Copy ptr ptrs)=forM (ptr:ptrs) (readPtr p) >>= zipWithM_ (\ptr x->writePtr p ptr x) ptrs . f
+    where f (x:xs)=map (+x) xs
 execStmt p (Locate d)=modifyPointer (+d)
 execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
