@@ -1,0 +1,18 @@
+#!/bin/env fish
+
+set PROG ./hs2bf
+set FILE $argv[1]
+
+function compile
+    echo "== $argv[1] =="
+    eval $PROG --make $FILE $argv[2]
+    echo -e "\n\n"
+end
+    
+
+compile Core -Sc
+and compile GMachine -Sg
+and compile SAM -Ss
+and compile SAM-flatten -Ssf
+and compile BF -Sb
+

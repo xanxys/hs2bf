@@ -1,0 +1,15 @@
+#!/bin/env fish
+
+function test_bf
+    echo "=== $argv[1] ==="
+    ~/devenv/hs2bf/hs2bf --make $argv[1] > test/(basename $argv[1] .hs).bf
+    ~/bin/bfi test/(basename $argv[1] .hs).bf
+    echo ""
+end
+
+
+test_bf test/Halt.hs
+and test_bf test/Const.hs
+and test_bf test/Hello.hs
+
+rm -f test/*.bf
