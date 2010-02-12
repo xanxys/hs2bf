@@ -40,14 +40,19 @@ data CrProc a=CrProc (CrAName a) [(CrAName a)] (CrAExpr a)
 
 
 compile :: Core a b -> Process (M.Map String [GMCode])
-compile (Core ds ps)=return $ M.fromList $ map compileP $ ps++concatMap convertData ds
+compile (Core ds ps)=return $ M.fromList $ map (compileP m) $ ps++pds
+    where
+        m=M.fromList cons
+        (pds,cons)=unzip $ concatMap convertData ds
+        
 
-
-convertData :: CrData a -> [CrProc b]
+-- | Convert one data declaration to procs and cons.
+convertData :: CrData a -> [(CrProc b,(String,Int))]
 convertData (CrData _ _ cs)=zipWith convertDataCon [0..] cs
 
-convertDataCon :: Int -> (CrName,[CrAnnot a CrType]) -> CrProc b
-convertDataCon t (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t $ map (wrap . CrVar) args
+convertDataCon :: Int -> (CrName,[CrAnnot a CrType]) -> (CrProc b,(String,Int))
+convertDataCon t (name,xs)=
+    (CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t $ map (wrap . CrVar) args,(name,n))
     where
         wrap=CrA undefined
         args=take n $ stringSeq "#d"
@@ -59,41 +64,39 @@ convertDataCon t (name,xs)=CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t 
 
 
 -- | Compile one super combinator to 'GMCode'
+--
 -- requirement:
 --
 -- * must not contain lambda
 --
-compileP :: CrProc a -> (String,[GMCode])
-compileP (CrProc name args expr)=
-    (unA name,adjustStack $ F.toList $ compileE m (unA expr)><S.fromList [Slide $ n+1])
+compileP :: M.Map String Int -> CrProc a -> (String,[GMCode])
+compileP mc (CrProc name args expr)=
+    (unA name,F.toList $ compileE mc mv (unA expr)><S.fromList [Slide $ n+1])
     where
         n=length args
-        m=M.fromList $ zip (map unA args) [1..]
+        mv=M.fromList $ zip (map unA args) (map PushArg [1..])
 
-compileE :: M.Map String Int -> CrExpr a -> S.Seq GMCode 
-compileE m (CrApp e0 e1)=(compileE m (unA e1) >< compileE m (unA e0)) |> MkApp
-compileE m (CrVar v)=S.singleton $ maybe (PushSC v) PushArg $ M.lookup v m
-compileE m (CrByte x)=S.singleton $ PushByte x
-compileE m (CrCstr t es)=concatS (map (compileE m . unA) $ reverse es) |> Pack t (length es)
+compileE :: M.Map String Int -> M.Map String GMCode -> CrExpr a -> S.Seq GMCode 
+compileE mc mv (CrApp e0 e1)=(compileE mc mv (unA e1) >< compileE mc (shift mv 1) (unA e0)) |> MkApp
+compileE mc mv (CrVar v)=S.singleton $ maybe (PushSC v) id $ M.lookup v mv
+compileE mc mv (CrByte x)=S.singleton $ PushByte x
+compileE mc mv (CrCstr t es)=
+    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map unA $ reverse es)) |> Pack t (length es)
+compileE mc mv (CrCase ec cs)=compileE mc mv (unA ec) |> Case (map f cs)
+    where
+        f (con,vs,e)=(mc M.! con,F.toList $ UnPack (length vs) <| compileE mc (insMV vs) (unA e))
+        insMV vs=M.union (shift mv $ length vs) $ M.fromList $ zip (map unA vs) (map Push [0..])
+            -- do you need reverse $ vs here?
+
 
 concatS :: [S.Seq a] -> S.Seq a
 concatS=foldr (><) S.empty
 
-
-adjustStack :: [GMCode] -> [GMCode]
-adjustStack=aux 0
+shift :: M.Map String GMCode -> Int -> M.Map String GMCode
+shift m d=M.map f m
     where
-        aux d []=[]
-        aux d (PushArg n:cs)=PushArg (d+n):aux (d+1) cs
-        aux d (MkApp:cs)=MkApp:aux (d-1) cs
-        aux d (PushSC k:cs)=PushSC k:aux (d+1) cs
-        aux d (PushByte x:cs)=PushByte x:aux (d+1) cs
-        aux d (Slide n:cs)=Slide n:aux (d-n) cs
-        aux d (Alloc n:cs)=Alloc n:aux (d-n+1) cs
-        aux d (Pack t n:cs)=Pack t n:aux (d-n+1) cs
-
-
-
+        f (Push n)=Push $ n+d
+        f (PushArg n)=PushArg $ n+d
 
 
 

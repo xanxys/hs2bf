@@ -53,12 +53,11 @@ compile m
         
         -- code generation
         lib=[stack1,heap1,heapNew,heapNew_,heapRef,stackNew]
---        cmd=map (compileCode t) $ nub $ concat $ M.elems m
         prc=map (uncurry $ compileCodeBlock t) $ M.assocs m
         loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalE,exec $ M.assocs t]
         
         -- layout configuration
-        codeSpace=ceiling $ log (fromIntegral $ M.size m+1)/log 256
+        codeSpace=ceiling $ log (fromIntegral $ M.size m+2)/log 256
         heapSpace=1
         ss=map (("S"++) . show) [0..heapSpace-1]
         hs=["H0"]
@@ -81,17 +80,6 @@ compileCodeBlock m name cs=SProc ("!"++name) [] $ -- map (flip Inline [] . compi
         needOrg=zipWith (\x y->if x/=y then Just x else Nothing) (map snd fbs) (map fst $ tail fbs)++
                [Just $ snd $ last fbs]
         fbs=map fbPos cs
-    
-
-
-compileName :: GMCode -> String
-compileName MkApp="%MkApp"
-compileName (PushSC k)="%PushSC_"++k
-compileName (Pack t n)="%Pack_"++show t++"_"++show n
-compileName (Slide n)="%Slide_"++show n
-compileName (PushArg n)="%PushArg_"++show n
-compileName (PushByte x)="%PushByte_"++show x
-
 
 
 fbPos :: GMCode -> (MPos,MPos)
@@ -456,17 +444,17 @@ stackNew=SProc "#stackNew" []
 -- Note2: 'PushArg' counts from top=0
 data GMCode
     =Slide Int -- ^ pop 1st...nth items
-    |Alloc Int
     |Update Int -- ^ \[n\]:=Ind &\[0\] and pop 1
     |Pop Int -- ^ remove n items
     |MkApp -- ^ function must be pushed after arguments. then use this.
-    |Eval
+    |Push Int
     |PushArg Int
     |PushSC String
     |PushByte Int
     |Pack Int Int
-    |Casejump [(Int,GMCode)]
-    |Split Int
+    |Case [(Int,[GMCode])]
+    |UnPack Int
+--    |Alloc Int
     deriving(Show,Eq,Ord)
 
 
@@ -594,6 +582,8 @@ popn=flip replicateM pop
 
 -- | /Pure/ evaluation
 evalGM :: Monad m => GMCode -> GMST m ()
+evalGM (Push n)=
+    refStack n >>= push
 evalGM (PushArg n)=do
     App _ arg<-refStack n >>= refHeap
     push arg
