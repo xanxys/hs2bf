@@ -3,9 +3,11 @@
 --
 -- GC is executed every 256 allocation.
 module GMachine where
+import Control.Arrow
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Identity
+import Data.Ord
 import Data.Char
 import Data.List
 import Data.Maybe
@@ -53,7 +55,7 @@ compile m
         
         -- code generation
         lib=[stack1,heap1,heapNew,heapNew_,heapRef,stackNew]
-        prc=map (uncurry $ compileCodeBlock t) $ M.assocs m
+        prc=map (uncurry $ compileProc t) $ M.assocs m
         loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalE,exec $ M.assocs t]
         
         -- layout configuration
@@ -63,16 +65,20 @@ compile m
         hs=["H0"]
 
 
+-- | Thin wrapper of 'compileCodeBlock'
+compileProc :: M.Map String Int -> String -> [GMCode] -> SProc
+compileProc m name cs=SProc ("!"++name) [] $ compileCodeBlock m cs
+
 
 data MPos
     =HeapA
     |StackA
+    |AA
     deriving(Show,Eq)
 
--- | Compile a sequence of 'GMCode's to a procedure. 1->1
-compileCodeBlock :: M.Map String Int -> String -> [GMCode] -> SProc
-compileCodeBlock m name cs=SProc ("!"++name) [] $ -- map (flip Inline [] . compileName) cs
-    concat $ zipWith (++) (map (compileCode m) cs) (map genTrans needOrg)
+-- | Compile a sequence of 'GMCode's. 1->1
+compileCodeBlock :: M.Map String Int -> [GMCode] -> [Stmt]
+compileCodeBlock m cs=concat $ zipWith (++) (map (compileCode m) cs) (map genTrans needOrg)
     where
         genTrans Nothing=[]
         genTrans (Just HeapA)=[Inline "#heap1" []]
@@ -90,6 +96,8 @@ fbPos (Pack _ _)=(HeapA,StackA)
 fbPos (Slide _)=(StackA,StackA)
 fbPos (PushArg _)=(StackA,StackA)
 fbPos (Push _)=(StackA,StackA)
+fbPos (Case _)=(StackA,HeapA)
+fbPos (UnPack _)=(StackA,StackA)
 
 
 
@@ -141,14 +149,30 @@ compileCode m c=case c of
         ,Copy pa [Register "addr"]
         ]++
         concatMap st2heap [2,1]++
-        heap2st
+        st2heapFin
     Pack t n -> -- stTag t x1...xn
         newFrame structTag (t:replicate n 0) $ \pa->
         [SAM.Alloc "addr"
         ,Copy pa [Register "addr"]
         ]++
         concatMap st2heap (reverse $ [1..n])++ -- pack struct members from back to front
-        heap2st
+        st2heapFin
+    UnPack n ->
+        [Inline "#stackNew" []
+        ,SAM.Alloc "saddr"
+        ,Move (Memory "S0" (-1)) [Register "saddr"]
+        ,Locate (-2)
+        ,Inline "#stack1" []
+        ,Inline "#heapRef" ["saddr"]
+        ,Delete "saddr"
+        ]++
+        map (SAM.Alloc . ("tr"++) . show) [1..n]++
+        map (\x->Copy (Memory "H0" $ 2+x) [Register $ "tr"++show x]) [1..n]++
+        [Inline "#heap1" []
+        ,Inline "#stackNew" []
+        ]++
+        map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) [1..n]++
+        map (Delete . ("tr"++) . show) [1..n]
     Slide n ->
         [Inline "#stackNew" []
         ,Locate (-1)
@@ -156,8 +180,7 @@ compileCode m c=case c of
         ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
         ]++
         map (Clear . Memory "S0" . negate) [1..n-1]++
-        [Locate $ negate n
-        ]
+        [Locate $ negate n]
     Push n ->
         [Inline "#stackNew" []
         ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
@@ -177,6 +200,18 @@ compileCode m c=case c of
         ,Move (Register "arg") [Memory "S0" 0]
         ,Delete "arg"
         ]
+    Case cs ->
+        [Inline "#stackNew" []
+        ,Locate (-1)
+        ,SAM.Alloc "aaddr"
+        ,Copy (Memory "S0" 0) [Register "saddr"]
+        ,Inline "#stack1" []
+        ,Inline "#heapRef" ["saddr"]
+        ,Delete "saddr"
+        ,SAM.Alloc "tag"
+        ,Copy (Memory "H0" 2) [Register "tag"]
+        ,Dispatch "tag" $ map (second $ compileCodeBlock m) cs
+        ] -- is this ok?
     where
         st2heap ix= -- applicable for Pack, App
             [Inline "#heap1" []
@@ -190,7 +225,7 @@ compileCode m c=case c of
             ,Move (Register "temp") [Memory "H0" $ negate $ 2+ix]
             ,Delete "temp"
             ]
-        heap2st= -- use this right after st2heap to push newly created pointer
+        st2heapFin= -- use this right after st2heap to push newly created pointer
             [Inline "#heap1" []
             ,Inline "#stackNew" []
             ,Move (Register "addr") [Memory "S0" 0]
@@ -460,16 +495,28 @@ data GMCode
     |Case [(Int,[GMCode])]
     |UnPack Int
 --    |Alloc Int
-    deriving(Show,Eq,Ord)
+    |Reduce RHint -- reduce stack top to WHNF
+    deriving(Show)
 
+data RHint
+    =RByte
+    |RE
+    |RAny
+    deriving(Show)
 
 pprintGM :: M.Map String [GMCode] -> String
 pprintGM=compileSB . U.Pack . map (uncurry pprintGMF) . M.assocs
 
 pprintGMF :: String -> [GMCode] -> StrBlock
-pprintGMF name cs=Line $ U.Pack
-    [Line $ U.Pack [Prim name,Prim ":"]
-    ,Indent $ U.Pack $ map (Line . Prim . show) cs]
+pprintGMF name cs=Line $ U.Pack [Line $ U.Pack [Prim name,Prim ":"],pprintGMCs cs]
+
+pprintGMCs :: [GMCode] -> StrBlock
+pprintGMCs=Indent . U.Pack . map pprintGMC
+
+pprintGMC :: GMCode -> StrBlock
+pprintGMC (Case cs)=U.Pack [Line $ Prim "Case",Indent $ U.Pack $ map f $ sortBy (comparing fst) cs]
+    where f (n,x)=U.Pack [Line $ Prim $ show n++"->",pprintGMCs x]
+pprintGMC c=Line $ Prim $ show c
 
 
 -- | G-machine state for use in 'interpretGM'
@@ -496,35 +543,63 @@ newtype Address=Address Int deriving(Show,Eq,Ord)
 
 interpretGM :: M.Map String [GMCode] -> IO ()
 interpretGM fs=evalStateT (exec []) (makeEmptySt "main")
-    where exec code=aux code >>= maybe (return ()) (exec . (fs M.!))
+    where exec code=evalGM code >>= maybe (return ()) (exec . (fs M.!))
 
 makeEmptySt :: String -> GMInternal
 makeEmptySt entry=runIdentity $ execStateT (alloc (Combinator entry) >>= push) $ GMInternal [] M.empty
 
 
 -- | Interpret a single combinator and returns new combinator to be executed.
-aux :: [GMCode] -> GMST IO (Maybe String)
-aux (c:cs)=evalGM c >> aux cs
-aux []=do
+evalGM :: [GMCode] -> GMST IO (Maybe String)
+evalGM []=do
     st<-get
     liftIO $ putStrLn $ "GMi: aux:\n"++showState st
     
     node<-refStack 0 >>= refHeap
     case node of
-        App a0 a1 -> push a0 >> aux []
+        App a0 a1 -> push a0 >> evalGM []
         Combinator x -> return (Just x) -- do not pop here, because the callee contains the code to remove it with arguments
         Struct 0 [f] -> do
             pop
             x<-liftIO (liftM ord getChar)
-            evalGM (PushByte x) >> push f >> evalGM MkApp
-            aux []
+            alloc (Const x) >>= push >> push f >> evalGM [MkApp]
         Struct 1 [x,k] -> do
             pop
             refHeap x >>= (liftIO . putChar . unConst)
             push k
-            aux []
+            evalGM []
         Struct 2 [] -> pop >> return Nothing
     where unConst (Const x)=chr x
+
+evalGM (Push n:xs)=
+    refStack n >>= push >> evalGM xs
+evalGM (PushArg n:xs)=do
+    App _ arg<-refStack n >>= refHeap
+    push arg
+    evalGM xs
+evalGM (MkApp:xs)=do
+    [s0,s1]<-popn 2
+    alloc (App s0 s1) >>= push
+    evalGM xs
+evalGM (Pack t n:xs)=do
+    ss<-popn n
+    alloc (Struct t ss) >>= push
+    evalGM xs
+evalGM (PushSC n:xs)=do
+    alloc (Combinator n) >>= push
+    evalGM xs
+evalGM (Slide n:xs)=do
+    x<-pop
+    popn n
+    push x
+    evalGM xs
+evalGM (PushByte x:xs)=alloc (Const x) >>= push >> evalGM xs
+evalGM (Case cs:xs)=do
+    Struct t _<-refStack 0 >>= refHeap
+    maybe (error $ "GMi: unhandled tag "++show t) (evalGM . (++xs)) $ lookup t cs
+evalGM x=error $ "evalGM: unsupported: "++show x
+
+
 
 
 showState :: GMInternal -> String
@@ -583,29 +658,6 @@ pop=do
 popn :: Monad m => Int -> GMST m [Address]
 popn=flip replicateM pop
 
-
-
--- | /Pure/ evaluation
-evalGM :: Monad m => GMCode -> GMST m ()
-evalGM (Push n)=
-    refStack n >>= push
-evalGM (PushArg n)=do
-    App _ arg<-refStack n >>= refHeap
-    push arg
-evalGM MkApp=do
-    [s0,s1]<-popn 2
-    alloc (App s0 s1) >>= push
-evalGM (Pack t n)=do
-    ss<-popn n
-    alloc (Struct t ss) >>= push
-evalGM (PushSC n)=do
-    alloc (Combinator n) >>= push
-evalGM (Slide n)=do
-    x<-pop
-    popn n
-    push x
-evalGM (PushByte x)=alloc (Const x) >>= push
-evalGM x=error $ "evalGM: unsupported: "++show x
 
 
 

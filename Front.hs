@@ -151,7 +151,7 @@ convExp h (HsVar (UnQual (HsIdent x)))=CrA (h,Nothing) (CrVar x)
 convExp h (HsApp e0 e1)=CrA (h,Nothing) $ CrApp (convExp h e0) (convExp h e1)
 convExp h e@(HsCase _ _)=convFullCase h e
 -- convExp h (HsExpTyeSig
-convExp h (HsLit (HsInt n))=CrA (h,Nothing) $ CrInt $ fromIntegral n
+convExp h (HsLit (HsInt n))=error "convExp: int"-- CrA (h,Nothing) $ CrInt $ fromIntegral n
 convExp h (HsLit (HsChar ch))=CrA (h,Nothing) $ CrByte $ fromIntegral $ ord ch
 convExp _ e=error $ "ERROR:convExp:"++show e
 
@@ -302,6 +302,7 @@ moveDecls e ds=HsLet ds e
 
 -- | Merge multiple 'HsMatch' in HsFunBind into one.
 mergeMatches :: [HsMatch] -> HsDecl
+mergeMatches []=error "Front: mergeMatches: empty [HsMatch] found!"
 mergeMatches [m]=HsFunBind [m]
 mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs expr) []]
     where
@@ -415,11 +416,11 @@ instance WeakDesugar HsExp where
     wds (HsEnumFromThen e0 e1)=HsApp (HsApp (stdVar "enumFromThen") (wds e0)) (wds e1)
     wds (HsEnumFromThenTo e0 e1 e2)=HsApp (HsApp (HsApp (stdVar "enumFromThen") (wds e0)) (wds e1)) (wds e2)
     wds (HsCon f)=wds $ HsVar f
-    wds (HsVar (Special HsCons))=stdVar ":"
+    wds (HsVar (Special HsCons))=stdVar "XCons"
     wds (HsVar (UnQual (HsSymbol v)))=HsVar (UnQual (HsIdent v))
     wds (HsVar v)=HsVar v
     wds (HsTuple es)=multiApp (stdTuple $ length es) (map wds es)
-    wds (HsList es)=foldr (\x y->HsApp (wds x) y) (stdVar "[]") es
+    wds (HsList es)=foldr (\x y->multiApp (stdVar "XCons") [wds x,y]) (stdVar "XNil") es
     wds (HsLit (HsString s))=wds $ HsList $ map (HsLit . HsChar) s
     wds l@(HsLit _)=l
     wds e=error $ "WeakDesugar:unsupported expression:"++show e

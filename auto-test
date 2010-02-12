@@ -10,6 +10,7 @@ end
 
 test_bf test/Halt.hs
 and test_bf test/Const.hs
+and test_bf test/ExplicitCase.hs
 and test_bf test/Hello.hs
 
 rm -f test/*.bf

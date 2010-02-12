@@ -50,9 +50,10 @@ compile (Core ds ps)=return $ M.fromList $ map (compileP m) $ ps++pds
 convertData :: CrData a -> [(CrProc b,(String,Int))]
 convertData (CrData _ _ cs)=zipWith convertDataCon [0..] cs
 
+-- tag, not arity
 convertDataCon :: Int -> (CrName,[CrAnnot a CrType]) -> (CrProc b,(String,Int))
 convertDataCon t (name,xs)=
-    (CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t $ map (wrap . CrVar) args,(name,n))
+    (CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t $ map (wrap . CrVar) args,(name,t))
     where
         wrap=CrA undefined
         args=take n $ stringSeq "#d"
@@ -87,7 +88,11 @@ compileE mc mv (CrCase ec cs)=compileE mc mv (unA ec) |> Case (map f cs)
         f (con,vs,e)=(mc M.! con,F.toList $ UnPack (length vs) <| compileE mc (insMV vs) (unA e))
         insMV vs=M.union (shift mv $ length vs) $ M.fromList $ zip (map unA vs) (map Push [0..])
             -- do you need reverse $ vs here?
-
+compileE mc mv (CrLet False bs e)=
+    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map (unA . snd) $ reverse bs)) >< compileE mc mv' (unA e)
+    where mv'=M.union (shift mv $ length bs) $ M.fromList $ zip (map (unA . fst) bs) (map Push [0..])
+compileE mc mv (CrLet _ _ _)=error "compileE: letrec"
+compileE mc mv (CrLm _ _)=error "compileE: lambda"
 
 concatS :: [S.Seq a] -> S.Seq a
 concatS=foldr (><) S.empty
@@ -132,7 +137,6 @@ pprintExpr f (CrLet flag binds e)=Span $
     ,pprintAExpr f e]
     where cv (v,e)=U.Pack [pprintAName f v,Prim "=",pprintAExpr f e,Prim ";"]
 pprintExpr f (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintAExpr f e0,pprintAExpr f e1],Prim ")"]
-pprintExpr f (CrInt n)=Prim $ show n
 pprintExpr f (CrByte n)=Prim $ show n
 -- pprintExpr f (Cr
 pprintExpr f e=error $ "pprintExpr:"++show e
@@ -178,7 +182,6 @@ data CrExpr a
     |CrCstr Int [CrAExpr a]
     |CrCase (CrAExpr a) [(String,[CrAName a],CrAExpr a)]
     |CrVar  CrName
-    |CrInt  Integer
     |CrByte Int
     deriving(Show)
 
