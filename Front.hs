@@ -67,7 +67,7 @@ aux :: ModuleEnv
 aux env s m=case S.minView s of
     Nothing -> return m
     Just (s0,s') -> do x<-parseModule1 env s0
-                       aux env (S.union s' $ S.fromList $ either (const []) collectDep x) (M.insert s0 x m)
+                       aux env (flip S.difference (M.keysSet m) $ S.union s' $ S.fromList $ either (const []) collectDep x) (M.insert s0 x m)
 
 
 
@@ -83,7 +83,7 @@ parseModule1 env mod=do
 
 
 collectDep :: HsModule -> [String]
-collectDep (HsModule _ _ _ is _)=map (uM . importModule) is
+collectDep (HsModule _ _ _ is _)="Prelude":map (uM . importModule) is
     where uM (Module x)=x
 
 -- | convert module name to full file path.
@@ -437,11 +437,11 @@ instance WeakDesugar HsQName where
     wds (UnQual n)=UnQual (wds n)
     wds (Special sc)=UnQual $ HsIdent n
         where n=case sc of
-                    HsUnitCon->"#T0"
-                    HsListCon->"[]"
-                    HsFunCon->"->"
-                    HsTupleCon n->"#T"++show n
-                    HsCons->":"
+                    HsUnitCon->"XT0"
+                    HsListCon-> "XNil"
+                    HsFunCon-> "XApp"
+                    HsTupleCon n-> "XT"++show n
+                    HsCons-> "XCons"
 
 instance WeakDesugar HsPat where
     wds (HsPInfixApp p0 q p1)=HsPApp (wds q) [wds p0,wds p1]

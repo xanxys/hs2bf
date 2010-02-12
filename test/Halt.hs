@@ -1,4 +1,3 @@
-import Prelude
 
 main=Halt
 

@@ -89,6 +89,7 @@ fbPos (MkApp)=(HeapA,StackA)
 fbPos (Pack _ _)=(HeapA,StackA)
 fbPos (Slide _)=(StackA,StackA)
 fbPos (PushArg _)=(StackA,StackA)
+fbPos (Push _)=(StackA,StackA)
 
 
 
@@ -156,6 +157,10 @@ compileCode m c=case c of
         ]++
         map (Clear . Memory "S0" . negate) [1..n-1]++
         [Locate $ negate n
+        ]
+    Push n ->
+        [Inline "#stackNew" []
+        ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
         ]
     PushArg n ->
         [Inline "#stackNew" []
