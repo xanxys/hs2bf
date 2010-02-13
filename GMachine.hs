@@ -45,12 +45,13 @@ data GFCompileFlag=GFCompileFlag
 --
 -- You can return from anywhere on stack to origin, but not from heap.
 compile :: M.Map String [GMCode] -> Process SAM
-compile m
-    |codeSpace>1          = error "GM->SAM: 255+ super combinator is not supported"
-    |heapSpace>1          = error "GM->SAM: 2+ byte addresses are not supported"
-    |M.notMember "main" m = error "GM->SAM: entry point not found"
-    |otherwise            = return $ SAM (ss++hs) (lib++prc++loop)
+compile m_pre
+    |codeSpace>1              = error "GM->SAM: 255+ super combinator is not supported"
+    |heapSpace>1              = error "GM->SAM: 2+ byte addresses are not supported"
+    |M.notMember "main" m_pre = error "GM->SAM: entry point not found"
+    |otherwise                = return $ SAM (ss++hs) (lib++prc++loop)
     where
+        m=elimReduce m_pre
         t=M.fromList $ ("main",2):zip (filter (/="main") $ M.keys m) [3..]
         
         -- code generation
@@ -63,6 +64,28 @@ compile m
         heapSpace=1
         ss=map (("S"++) . show) [0..heapSpace-1]
         hs=["H0"]
+
+-- inlining condition:
+-- 
+
+elimReduce :: M.Map String [GMCode] -> M.Map String [GMCode]
+elimReduce=M.fromList . concatMap f . M.assocs
+    where f (n,xs)=aux n [] xs
+
+
+aux :: String -> [GMCode] -> [GMCode] -> [(String,[GMCode])]
+aux n cs []=[(n,reverse cs)]
+aux n cs (Reduce _:xs)=(n,reverse cs):aux (n++"_") [] xs -- TODO: insert cont SC pushing code
+aux n cs (Case as:xs)
+    |null rs   = aux n (Case as:cs) xs
+    |otherwise = (n,reverse $ Case as'':cs):rs
+    where
+        as'=map (\(k,x)->(k,aux (n++"_d"++show k) [] x)) as
+        rs=concatMap (tail . snd) as'
+        as''=map (second $ (++xs) . snd . head) as'
+aux ns cs (x:xs)=aux ns (x:cs) xs
+
+
 
 
 -- | Thin wrapper of 'compileCodeBlock'
@@ -124,115 +147,119 @@ newFrame tag xs post=
 
 -- | Compile a single 'GMCode' to a procedure. StackA|HeapA -> StackA|HeapA
 compileCode :: M.Map String Int -> GMCode -> [Stmt]
-compileCode m c=case c of
-    PushByte x -> -- constTag x
-        newFrame constTag [x] $ \pa->
-        [SAM.Alloc "addr"
-        ,Copy pa [Register "addr"]
-        ,Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ,Move (Register "addr") [Memory "S0" 0]
-        ,Delete "addr"
-        ]
-    PushSC k -> -- scTag sc
-        newFrame scTag [m M.! k] $ \pa->
-        [SAM.Alloc "addr"
-        ,Copy pa [Register "addr"]
-        ,Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ,Move (Register "addr") [Memory "S0" 0]
-        ,Delete "addr"
-        ]
-    MkApp -> -- appTag ap0 ap1
-        newFrame appTag [0,0] $ \pa->
-        [SAM.Alloc "addr"
-        ,Copy pa [Register "addr"]
-        ]++
-        concatMap st2heap [2,1]++
-        st2heapFin
-    Pack t n -> -- stTag t x1...xn
-        newFrame structTag (t:replicate n 0) $ \pa->
-        [SAM.Alloc "addr"
-        ,Copy pa [Register "addr"]
-        ]++
-        concatMap st2heap (reverse $ [1..n])++ -- pack struct members from back to front
-        st2heapFin
-    UnPack n ->
-        [Inline "#stackNew" []
-        ,SAM.Alloc "saddr"
-        ,Move (Memory "S0" (-1)) [Register "saddr"]
-        ,Locate (-2)
-        ,Inline "#stack1" []
-        ,Inline "#heapRef" ["saddr"]
-        ,Delete "saddr"
-        ]++
-        map (SAM.Alloc . ("tr"++) . show) [1..n]++
-        map (\x->Copy (Memory "H0" $ 2+x) [Register $ "tr"++show x]) [1..n]++
-        [Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ]++
-        map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) [1..n]++
-        map (Delete . ("tr"++) . show) [1..n]
-    Slide n ->
-        [Inline "#stackNew" []
-        ,Locate (-1)
-        ,Clear (Memory "S0" $ negate n)
-        ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
-        ]++
-        map (Clear . Memory "S0" . negate) [1..n-1]++
-        [Locate $ negate n]
-    Push n ->
-        [Inline "#stackNew" []
-        ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
-        ]
-    PushArg n ->
-        [Inline "#stackNew" []
-        ,Locate (-1)
-        ,SAM.Alloc "aaddr"
-        ,Copy (Memory "S0" $ negate n) [Register "aaddr"]
-        ,Inline "#stack1" []
-        ,Inline "#heapRef" ["aaddr"]
-        ,Delete "aaddr"
-        ,SAM.Alloc "arg"
-        ,Copy (Memory "H0" 3) [Register "arg"]
-        ,Inline "#heap1" []
-        ,Inline "#stackNew" []
-        ,Move (Register "arg") [Memory "S0" 0]
-        ,Delete "arg"
-        ]
-    Case cs ->
-        [Inline "#stackNew" []
-        ,Locate (-1)
-        ,SAM.Alloc "aaddr"
-        ,Copy (Memory "S0" 0) [Register "saddr"]
-        ,Inline "#stack1" []
-        ,Inline "#heapRef" ["saddr"]
-        ,Delete "saddr"
-        ,SAM.Alloc "tag"
-        ,Copy (Memory "H0" 2) [Register "tag"]
-        ,Dispatch "tag" $ map (second $ compileCodeBlock m) cs
-        ] -- is this ok?
-    where
-        st2heap ix= -- applicable for Pack, App
-            [Inline "#heap1" []
-            ,Inline "#stackNew" []
-            ,Locate (-1)
-            ,SAM.Alloc "temp"
-            ,Move (Memory "S0" 0) [Register "temp"]
-            ,Locate (-1)
-            ,Inline "#stack1" []
-            ,Inline "#heapNew_" []
-            ,Move (Register "temp") [Memory "H0" $ negate $ 2+ix]
-            ,Delete "temp"
-            ]
-        st2heapFin= -- use this right after st2heap to push newly created pointer
-            [Inline "#heap1" []
-            ,Inline "#stackNew" []
-            ,Move (Register "addr") [Memory "S0" 0]
-            ,Delete "addr"
-            ]
+compileCode m (PushByte x)= -- constTag x
+    newFrame constTag [x] $ \pa->
+    [SAM.Alloc "addr"
+    ,Copy pa [Register "addr"]
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Move (Register "addr") [Memory "S0" 0]
+    ,Delete "addr"
+    ]
+compileCode m (PushSC k)= -- scTag sc
+    newFrame scTag [m M.! k] $ \pa->
+    [SAM.Alloc "addr"
+    ,Copy pa [Register "addr"]
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Move (Register "addr") [Memory "S0" 0]
+    ,Delete "addr"
+    ]
+compileCode m (MkApp)= -- appTag ap0 ap1
+    newFrame appTag [0,0] $ \pa->
+    [SAM.Alloc "addr"
+    ,Copy pa [Register "addr"]
+    ]++
+    concatMap st2heap [2,1]++
+    st2heapFin
+compileCode m (Pack t n)= -- stTag t x1...xn
+    newFrame structTag (t:replicate n 0) $ \pa->
+    [SAM.Alloc "addr"
+    ,Copy pa [Register "addr"]
+    ]++
+    concatMap st2heap (reverse $ [1..n])++ -- pack struct members from back to front
+    st2heapFin
+compileCode m (UnPack n)=
+    [Inline "#stackNew" []
+    ,SAM.Alloc "saddr"
+    ,Move (Memory "S0" (-1)) [Register "saddr"]
+    ,Locate (-2)
+    ,Inline "#stack1" []
+    ,Inline "#heapRef" ["saddr"]
+    ,Delete "saddr"
+    ]++
+    map (SAM.Alloc . ("tr"++) . show) [1..n]++
+    map (\x->Copy (Memory "H0" $ 2+x) [Register $ "tr"++show x]) [1..n]++
+    [Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ]++
+    map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) [1..n]++
+    map (Delete . ("tr"++) . show) [1..n]
+compileCode m (Slide n)=
+    [Inline "#stackNew" []
+    ,Locate (-1)
+    ,Clear (Memory "S0" $ negate n)
+    ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
+    ]++
+    map (Clear . Memory "S0" . negate) [1..n-1]++
+    [Locate $ negate n]
+compileCode m (Push n)=
+    [Inline "#stackNew" []
+    ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
+    ]
+compileCode m (PushArg n)=
+    [Inline "#stackNew" []
+    ,Locate (-1)
+    ,SAM.Alloc "aaddr"
+    ,Copy (Memory "S0" $ negate n) [Register "aaddr"]
+    ,Inline "#stack1" []
+    ,Inline "#heapRef" ["aaddr"]
+    ,Delete "aaddr"
+    ,SAM.Alloc "arg"
+    ,Copy (Memory "H0" 3) [Register "arg"]
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Move (Register "arg") [Memory "S0" 0]
+    ,Delete "arg"
+    ]
+compileCode m (Case cs)=
+    [Inline "#stackNew" []
+    ,Locate (-1)
+    ,SAM.Alloc "aaddr"
+    ,Copy (Memory "S0" 0) [Register "saddr"]
+    ,Inline "#stack1" []
+    ,Inline "#heapRef" ["saddr"]
+    ,Delete "saddr"
+    ,SAM.Alloc "tag"
+    ,Copy (Memory "H0" 2) [Register "tag"]
+    ,Dispatch "tag" $ map (second $ compileCodeBlock m) cs
+    ] -- is this ok?
 
     
+    
+-- | Applicable for Pack, App
+st2heap ix=
+    [Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Locate (-1)
+    ,SAM.Alloc "temp"
+    ,Move (Memory "S0" 0) [Register "temp"]
+    ,Locate (-1)
+    ,Inline "#stack1" []
+    ,Inline "#heapNew_" []
+    ,Move (Register "temp") [Memory "H0" $ negate $ 2+ix]
+    ,Delete "temp"
+    ]
+
+-- | Use this right after 'st2heap' to push newly created pointer
+st2heapFin=
+    [Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Move (Register "addr") [Memory "S0" 0]
+    ,Delete "addr"
+    ]
+
+
 appTag=0
 scTag=1
 constTag=2
@@ -571,6 +598,7 @@ evalGM []=do
         Struct 2 [] -> pop >> return Nothing
     where unConst (Const x)=chr x
 
+evalGM (Reduce _:xs)=evalGM [] >> evalGM xs
 evalGM (Push n:xs)=
     refStack n >>= push >> evalGM xs
 evalGM (PushArg n:xs)=do

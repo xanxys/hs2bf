@@ -83,7 +83,7 @@ compileE mc mv (CrVar v)=S.singleton $ maybe (PushSC v) id $ M.lookup v mv
 compileE mc mv (CrByte x)=S.singleton $ PushByte x
 compileE mc mv (CrCstr t es)=
     concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map unA $ reverse es)) |> Pack t (length es)
-compileE mc mv (CrCase ec cs)=compileE mc mv (unA ec) |> Case (map f cs)
+compileE mc mv (CrCase ec cs)=compileE mc mv (unA ec) |> Reduce RAny |> Case (map f cs)
     where
         f (con,vs,e)=(mc M.! con,F.toList $ UnPack (length vs) <| compileE mc (insMV vs) (unA e))
         insMV vs=M.union (shift mv $ length vs) $ M.fromList $ zip (map unA vs) (map Push [0..])
