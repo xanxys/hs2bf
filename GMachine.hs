@@ -127,7 +127,8 @@ fbPos (UnPack _)=(StackA,StackA)
 -- requirement: HF*
 newFrame :: Int -> [Int] -> (Pointer -> [Stmt]) -> [Stmt]
 newFrame tag xs post=
-    [SAM.Alloc "addr"
+    [Comment $ unwords ["nf",show tag,show xs]
+    ,SAM.Alloc "addr"
     ,Inline "#heapNew" ["addr"]
     ,Clear (Memory "H0" $ size-2)
     ,Move (Register "addr") [Memory "H0" $ size-2]

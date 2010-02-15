@@ -210,6 +210,7 @@ desugarStmt (Dispatch r cs)=concatMap desugarStmt $ expandDispatch r $ sortBy (c
 desugarStmt (While ptr ss)=[While ptr $ concatMap desugarStmt ss]
 desugarStmt (Clear ptr)=[Move ptr []]
 desugarStmt (Copy p ps)=[Alloc "_ct",Move p [Register "_ct"],Move (Register "_ct") (p:ps),Delete "_ct"]
+desugarStmt (Comment _)=[]
 desugarStmt s=[s]
 
 -- | Case numbers must be sorted in ascending order.
@@ -255,6 +256,7 @@ data Stmt
     |Inline ProcName [RegName]
     |Input Pointer
     |Output Pointer
+    |Comment String -- ^ one-line comment
     deriving(Show)
 
 data Pointer
@@ -307,7 +309,7 @@ pprintStmt (Inline n rs)=Line $ Span $ map Prim ("inline":n:rs)
 pprintStmt (Clear r)=Line $ Span [Prim "clear",Prim $ show r]
 pprintStmt (Input p)=Line $ Span [Prim "in",Prim $ show p]
 pprintStmt (Output p)=Line $ Span [Prim "out",Prim $ show p]
-
+pprintStmt (Comment s)=Line $ Span [Prim "--",Prim s]
 
 pprintCase :: (Int,[Stmt]) -> StrBlock
 pprintCase (n,ss)=Pack [Line $ Prim $ show n,Indent $ Pack $ map pprintStmt ss]
@@ -548,8 +550,8 @@ execStmt p (Dispatch r cs)=do
 execStmt p (Clear ptr)=writePtr p ptr 0
 execStmt p (Input ptr)=liftIO getChar >>= writePtr p ptr . fromIntegral . ord
 execStmt p (Output ptr)=readPtr p ptr >>= liftIO . putChar . chr . fromIntegral
-    
-    
+execStmt p (Comment _)=return ()
+
     
     
 readPtr :: Monad m => ProcName -> Pointer -> SAMST m Word8
