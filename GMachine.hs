@@ -56,7 +56,7 @@ compile m
         -- code generation
         lib=[stack1,heap1,heapNew,heapNew_,heapRef,stackNew]
         prc=map (uncurry $ compileProc t) $ M.assocs m
-        loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalE,exec $ M.assocs t]
+        loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE,exec $ M.assocs t]
         
         -- layout configuration
         codeSpace=ceiling $ log (fromIntegral $ M.size m+2)/log 256
@@ -76,7 +76,8 @@ elimReduce=M.fromList . concatMap f . M.assocs
 
 aux :: String -> [GMCode] -> [GMCode] -> [(String,[GMCode])]
 aux n cs []=[(n,reverse cs)]
-aux n cs (Reduce _:xs)=(n,reverse cs):aux (n++"_") [] xs -- TODO: insert cont SC pushing code
+aux n cs (Reduce _:xs)=(n,reverse cs++[PushSC n',Swap]):aux n' [] xs
+    where n'=n++"_"
 aux n cs (Case as:xs)
     |null rs   = aux n (Case as:cs) xs
     |otherwise = (n,reverse $ Case as'':cs):rs
@@ -115,11 +116,12 @@ compileCodeBlock m cs=concat $ zipWith (++) (map (compileCode m) cs) (map genTra
 fbPos :: GMCode -> (MPos,MPos)
 fbPos (PushByte _)=(HeapA,StackA)
 fbPos (PushSC _)=(HeapA,StackA)
-fbPos (MkApp)=(HeapA,StackA)
+fbPos MkApp=(HeapA,StackA)
 fbPos (Pack _ _)=(HeapA,StackA)
+fbPos Swap=(StackA,StackA)
+fbPos (Push _)=(StackA,StackA)
 fbPos (Slide _)=(StackA,StackA)
 fbPos (PushArg _)=(StackA,StackA)
-fbPos (Push _)=(StackA,StackA)
 fbPos (Case _)=(StackA,HeapA)
 fbPos (UnPack _)=(StackA,StackA)
 
@@ -197,6 +199,18 @@ compileCode m (UnPack n)=
     ]++
     map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) [1..n]++
     map (Delete . ("tr"++) . show) [1..n]
+compileCode m Swap=
+    [Inline "#stackNew" []
+    ,SAM.Alloc "temp"
+    ,Move (Memory "S0" (-1)) [Register "temp"]
+    ,Move (Memory "S0" (-2)) [Memory "S0" (-1)]
+    ,Move (Register "temp") [Memory "S0" (-2)]
+    ,Delete "temp"
+    ]
+compileCode m (Push n)=
+    [Inline "#stackNew" []
+    ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
+    ]
 compileCode m (Slide n)=
     [Inline "#stackNew" []
     ,Locate (-1)
@@ -205,10 +219,6 @@ compileCode m (Slide n)=
     ]++
     map (Clear . Memory "S0" . negate) [1..n-1]++
     [Locate $ negate n]
-compileCode m (Push n)=
-    [Inline "#stackNew" []
-    ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
-    ]
 compileCode m (PushArg n)=
     [Inline "#stackNew" []
     ,Locate (-1)
@@ -227,7 +237,7 @@ compileCode m (PushArg n)=
 compileCode m (Case cs)=
     [Inline "#stackNew" []
     ,Locate (-1)
-    ,SAM.Alloc "aaddr"
+    ,SAM.Alloc "saddr"
     ,Copy (Memory "S0" 0) [Register "saddr"]
     ,Inline "#stack1" []
     ,Inline "#heapRef" ["saddr"]
@@ -235,9 +245,10 @@ compileCode m (Case cs)=
     ,SAM.Alloc "tag"
     ,Copy (Memory "H0" 2) [Register "tag"]
     ,Dispatch "tag" $ map (second $ compileCodeBlock m) cs
+    ,Delete "tag"
     ] -- is this ok?
 
-    
+
     
 -- | Applicable for Pack, App
 st2heap ix=
@@ -306,6 +317,8 @@ mainLoop=SProc "%mainLoop" []
 -- * eval: sc:=1
 --
 -- * exec: sc:=2-255
+--
+-- this function calls 'evalApp', 'evalSC', 'evalStr' and evalConst after aligning with heap frame.
 eval :: SProc
 eval=SProc "%eval" ["sc"]
     [Inline "#stack1" []
@@ -322,7 +335,7 @@ eval=SProc "%eval" ["sc"]
         [(appTag,[Inline "%evalApp" []])
         ,(scTag,[Inline "%evalSC" ["sc"]])
         ,(constTag,[])
-        ,(structTag,[Inline "%evalE" ["sc"]])
+        ,(structTag,[Inline "%evalStr" ["sc"]])
         ]
     ,Delete "tag"
     ]
@@ -343,6 +356,33 @@ evalSC=SProc "%evalSC" ["sc"]
     ,Inline "#heap1" []
     ]
 
+
+evalStr=SProc "%evalStr" ["sc"]
+    [Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Locate (-1)
+    ,SAM.Alloc "root"
+    ,Val (Register "root") 1
+    ,While (Memory "S0" (-1)) -- non-root frame
+        [Val (Register "sc") (-1) -- sc:=0
+        ,Move (Memory "S0" (-1)) [Register "sc"]
+        ,Move (Memory "S0" 0) [Memory "S0" (-1)] -- move exp to top
+        ,Val (Register "root") (-1)
+        ,Inline "#stack1" []
+        ]
+    ,While (Register "root")
+        [Val (Register "root") (-1)
+        ,SAM.Alloc "addr"
+        ,Copy (Memory "S0" 0) [Register "addr"]
+        ,Inline "#stack1" []
+        ,Inline "#heapRef" ["addr"]
+        ,Delete "addr"
+        ,Inline "%evalE" ["sc"]
+        ]
+    ,Delete "root"
+    ]
+
+-- sc must be 1 on entry
 evalE=SProc "%evalE" ["sc"]
     [SAM.Alloc "stag"
     ,Copy (Memory "H0" 2) [Register "stag"]
@@ -524,7 +564,8 @@ data GMCode
     |Case [(Int,[GMCode])]
     |UnPack Int
 --    |Alloc Int
-    |Reduce RHint -- reduce stack top to WHNF
+    |Reduce RHint -- ^ reduce stack top to WHNF
+    |Swap -- ^ used for implementing 'elimReduce'
     deriving(Show)
 
 data RHint
@@ -571,63 +612,76 @@ newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
 interpretGM :: M.Map String [GMCode] -> IO ()
-interpretGM fs=evalStateT (exec []) (makeEmptySt "main")
-    where exec code=evalGM code >>= maybe (return ()) (exec . (fs M.!))
+interpretGM fs=evalStateT (evalGM False fs []) (makeEmptySt "main")
+
+interpretGMR :: M.Map String [GMCode] -> IO ()
+interpretGMR fs=evalStateT (evalGM True fs []) (makeEmptySt "main")
 
 makeEmptySt :: String -> GMInternal
 makeEmptySt entry=runIdentity $ execStateT (alloc (Combinator entry) >>= push) $ GMInternal [] M.empty
 
 
 -- | Interpret a single combinator and returns new combinator to be executed.
-evalGM :: [GMCode] -> GMST IO (Maybe String)
-evalGM []=do
+evalGM :: Bool -> M.Map String [GMCode] -> [GMCode] -> GMST IO ()
+evalGM fl fs []=do
     st<-get
     liftIO $ putStrLn $ "GMi: aux:\n"++showState st
     
     node<-refStack 0 >>= refHeap
+    
     case node of
-        App a0 a1 -> push a0 >> evalGM []
-        Combinator x -> return (Just x) -- do not pop here, because the callee contains the code to remove it with arguments
-        Struct 0 [f] -> do
-            pop
-            x<-liftIO (liftM ord getChar)
-            alloc (Const x) >>= push >> push f >> evalGM [MkApp]
-        Struct 1 [x,k] -> do
-            pop
-            refHeap x >>= (liftIO . putChar . unConst)
-            push k
-            evalGM []
-        Struct 2 [] -> pop >> return Nothing
+        App a0 a1 -> push a0 >> evalGM fl fs []
+        Combinator x -> evalGM fl fs (fs M.! x)
+        _ -> do x<-isRootNode
+                if x
+                    then case node of
+                        Struct 0 [f] -> do
+                            pop
+                            x<-liftIO (liftM ord getChar)
+                            alloc (Const x) >>= push >> push f >> evalGM fl fs [MkApp]
+                        Struct 1 [x,k] -> do
+                            pop
+                            refHeap x >>= (liftIO . putChar . unConst)
+                            push k
+                            evalGM fl fs []
+                        Struct 2 [] -> pop >> return ()
+                    else when fl $ do{[e,c]<-popn 2; Combinator x<-refHeap c; push e; evalGM fl fs (fs M.! x)}
     where unConst (Const x)=chr x
 
-evalGM (Reduce _:xs)=evalGM [] >> evalGM xs
-evalGM (Push n:xs)=
-    refStack n >>= push >> evalGM xs
-evalGM (PushArg n:xs)=do
+evalGM fl fs (Reduce _:xs)=evalGM fl fs [] >> evalGM fl fs xs
+evalGM fl fs (Push n:xs)=
+    refStack n >>= push >> evalGM fl fs xs
+evalGM fl fs (PushArg n:xs)=do
     App _ arg<-refStack n >>= refHeap
     push arg
-    evalGM xs
-evalGM (MkApp:xs)=do
+    evalGM fl fs xs
+evalGM fl fs (MkApp:xs)=do
     [s0,s1]<-popn 2
     alloc (App s0 s1) >>= push
-    evalGM xs
-evalGM (Pack t n:xs)=do
+    evalGM fl fs xs
+evalGM fl fs (Pack t n:xs)=do
     ss<-popn n
     alloc (Struct t ss) >>= push
-    evalGM xs
-evalGM (PushSC n:xs)=do
+    evalGM fl fs xs
+evalGM fl fs (PushSC n:xs)=do
     alloc (Combinator n) >>= push
-    evalGM xs
-evalGM (Slide n:xs)=do
+    evalGM fl fs xs
+evalGM fl fs (Slide n:xs)=do
     x<-pop
     popn n
     push x
-    evalGM xs
-evalGM (PushByte x:xs)=alloc (Const x) >>= push >> evalGM xs
-evalGM (Case cs:xs)=do
+    evalGM fl fs xs
+evalGM fl fs (PushByte x:xs)=alloc (Const x) >>= push >> evalGM fl fs xs
+evalGM fl fs (Case cs:xs)=do
     Struct t _<-refStack 0 >>= refHeap
-    maybe (error $ "GMi: unhandled tag "++show t) (evalGM . (++xs)) $ lookup t cs
-evalGM x=error $ "evalGM: unsupported: "++show x
+    maybe (error $ "GMi: unhandled tag "++show t) (evalGM fl fs . (++xs)) $ lookup t cs
+evalGM fl fs (UnPack n:xs)=do
+    Struct _ cs<-pop >>= refHeap
+    when (length cs/=n) (error $ "GMi: UnPack arity error")
+    mapM_ push cs
+    evalGM fl fs xs
+evalGM fl fs (Swap:xs)=popn 2 >>= mapM_ push >> evalGM fl fs xs
+evalGM _ _ x=error $ "evalGM: unsupported: "++show x
 
 
 
@@ -666,6 +720,12 @@ refHeap addr=do
 
 refStack :: Monad m => Int -> GMST m Address
 refStack n=liftM ((!!n) . stack) get
+
+isRootNode :: Monad m => GMST m Bool
+isRootNode=do
+    n<-liftM (length . stack) get
+    return $ n==1
+
 
 push :: Monad m => Address -> GMST m ()
 push addr=do

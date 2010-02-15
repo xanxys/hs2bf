@@ -12,6 +12,7 @@ end
 
 compile Core -Sc
 and compile GMachine -Sg
+and compile GMachine-r -Sgr
 and compile SAM -Ss
 and compile SAM-flatten -Ssf
 and compile BF -Sb

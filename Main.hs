@@ -93,7 +93,7 @@ execCommand (Interpret opt from)=do
     case tolang opt of
         LangCore _  -> error "Core interpreter is not implemented"
         LangGM ""   -> capProcess gm  GMachine.interpretGM
-        LangGM "r"  -> capProcess gm' GMachine.interpretGM
+        LangGM "r"  -> capProcess gm' GMachine.interpretGMR
         LangSAM ""  -> capProcess sam  SAM.interpret
         LangSAM "f" -> capProcess sam' SAM.interpret
         LangBF      -> capProcess bf Brainfuck.interpret
