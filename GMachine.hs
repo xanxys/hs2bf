@@ -45,13 +45,12 @@ data GFCompileFlag=GFCompileFlag
 --
 -- You can return from anywhere on stack to origin, but not from heap.
 compile :: M.Map String [GMCode] -> Process SAM
-compile m_pre
-    |codeSpace>1              = error "GM->SAM: 255+ super combinator is not supported"
-    |heapSpace>1              = error "GM->SAM: 2+ byte addresses are not supported"
-    |M.notMember "main" m_pre = error "GM->SAM: entry point not found"
-    |otherwise                = return $ SAM (ss++hs) (lib++prc++loop)
+compile m
+    |codeSpace>1          = error "GM->SAM: 255+ super combinator is not supported"
+    |heapSpace>1          = error "GM->SAM: 2+ byte addresses are not supported"
+    |M.notMember "main" m = error "GM->SAM: entry point not found"
+    |otherwise            = return $ SAM (ss++hs) (lib++prc++loop)
     where
-        m=elimReduce m_pre
         t=M.fromList $ ("main",2):zip (filter (/="main") $ M.keys m) [3..]
         
         -- code generation
@@ -63,11 +62,13 @@ compile m_pre
         codeSpace=ceiling $ log (fromIntegral $ M.size m+2)/log 256
         heapSpace=1
         ss=map (("S"++) . show) [0..heapSpace-1]
-        hs=["H0"]
+        hs=["H0"] 
+
+simplify :: M.Map String [GMCode] -> Process (M.Map String [GMCode])
+simplify=return . elimReduce
 
 -- inlining condition:
 -- 
-
 elimReduce :: M.Map String [GMCode] -> M.Map String [GMCode]
 elimReduce=M.fromList . concatMap f . M.assocs
     where f (n,xs)=aux n [] xs

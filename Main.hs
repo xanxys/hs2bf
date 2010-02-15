@@ -35,8 +35,8 @@ data Command
 
 data Language
     =LangCore String
-    |LangGMachine
-    |LangSAM String
+    |LangGM   String
+    |LangSAM  String
     |LangBF
     deriving(Show,Eq,Ord)
 
@@ -65,8 +65,8 @@ parseOption :: [String] -> Option
 parseOption []=Option{addrSpace=2,verbose=True,debug=False,tolang=LangBF}
 parseOption (term:xs)=case term of
     '-':'S':'c':xs -> o{tolang=LangCore xs}
-    "-Sg" -> o{tolang=LangGMachine}
-    '-':'S':'s':xs -> o{tolang=LangSAM xs}
+    '-':'S':'g':xs -> o{tolang=LangGM   xs}
+    '-':'S':'s':xs -> o{tolang=LangSAM  xs}
     "-Sb" -> o{tolang=LangBF}
     _ -> error $ "unknown option:"++term
     where o=parseOption xs
@@ -83,34 +83,38 @@ execCommand (Interpret opt from)=do
     xs<-Front.collectModules env mod
     let core=xs >>= Front.compile
         gm  =core >>= Core.compile
-        sam =gm   >>= GMachine.compile
+        gm' =gm   >>= GMachine.simplify
+        sam =gm'  >>= GMachine.compile
         sam'=sam  >>= SAM.simplify
         bf  =sam' >>= SAM.compile
     -- byte stream
     hSetBuffering stdin NoBuffering
     hSetBuffering stdout NoBuffering
     case tolang opt of
-        LangCore _ -> error "Core interpreter is not implemented"
-        LangGMachine -> capProcess gm GMachine.interpretGM
+        LangCore _  -> error "Core interpreter is not implemented"
+        LangGM ""   -> capProcess gm  GMachine.interpretGM
+        LangGM "r"  -> capProcess gm' GMachine.interpretGM
         LangSAM ""  -> capProcess sam  SAM.interpret
         LangSAM "f" -> capProcess sam' SAM.interpret
-        LangBF -> capProcess bf Brainfuck.interpret
+        LangBF      -> capProcess bf Brainfuck.interpret
     where capProcess=flip runProcessWithIO
 
 execCommand (Compile opt from)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
-    let core=xs >>= Front.compile
+    let core=xs   >>= Front.compile
         gm  =core >>= Core.compile
-        sam =gm   >>= GMachine.compile
+        gm' =gm   >>= GMachine.simplify
+        sam =gm'  >>= GMachine.compile
         sam'=sam  >>= SAM.simplify
         bf  =sam' >>= SAM.compile
     case tolang opt of
-        LangCore _   -> capProcess core Core.pprintCoreP
-        LangGMachine -> capProcess gm GMachine.pprintGM
-        LangSAM ""   -> capProcess sam SAM.pprint
-        LangSAM "f"  -> capProcess sam' SAM.pprint
-        LangBF       -> capProcess bf Brainfuck.pprint
+        LangCore _  -> capProcess core Core.pprintCoreP
+        LangGM  ""  -> capProcess gm  GMachine.pprintGM
+        LangGM  "r" -> capProcess gm' GMachine.pprintGM
+        LangSAM ""  -> capProcess sam SAM.pprint
+        LangSAM "f" -> capProcess sam' SAM.pprint
+        LangBF      -> capProcess bf Brainfuck.pprint
     where capProcess pr f=runProcessWithIO (putStr . f) pr
 
 
@@ -129,7 +133,8 @@ help=unlines $
     ,"option:"
     ,"  -o <file> : output path"
     ,"  -Sc : to Core code"
-    ,"  -Sm : to GMachine"
+    ,"  -Sg : to GMachine"
+    ,"  -Sgr: to GMachine (simplified)"
     ,"  -Ss : to SAM"
     ,"  -Ssf: to SAM (most simplified)"
     ,"  -Sg : to SCGR"

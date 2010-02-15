@@ -552,8 +552,8 @@ execStmt p (Input ptr)=liftIO getChar >>= writePtr p ptr . fromIntegral . ord
 execStmt p (Output ptr)=readPtr p ptr >>= liftIO . putChar . chr . fromIntegral
 execStmt p (Comment _)=return ()
 
-    
-    
+
+
 readPtr :: Monad m => ProcName -> Pointer -> SAMST m Word8
 readPtr p (Memory r d)=do
     dp<-liftM pointer get
