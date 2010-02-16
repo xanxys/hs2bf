@@ -27,41 +27,45 @@ import qualified Util as U
 import GMachine
 
 
-type CoreP=Core (LocHint,Maybe CrKind) (LocHint,Maybe CrType)
 type LocHint=String
 
 
-data Core a b=Core [CrData a] [CrProc b]
-data CrData a=CrData CrName [(CrAName a)] [(CrName,[CrAnnot a CrType])]
-data CrProc a=CrProc (CrAName a) [(CrAName a)] (CrAExpr a)
+data Core=Core [CrData] [CrProc]
+data CrData=CrData CrName [CrName] [(CrName,[CrType])]
+data CrProc=CrProc CrName [CrName] CrExpr
 
 
 
 
 
-compile :: Core a b -> Process (M.Map String [GMCode])
-compile (Core ds ps)=return $ M.fromList $ map (compileP m) $ ps++pds
+compile :: Core -> Process (M.Map String [GMCode])
+compile core=return $ M.fromList $ undef:map (compileP m) (ps++pds)
     where
+        Core ds ps=Core.simplify core
         m=M.fromList cons
         (pds,cons)=unzip $ concatMap convertData ds
-        
+        undef=("undefined",[UError "undefined"])
+
 
 -- | Convert one data declaration to procs and cons.
-convertData :: CrData a -> [(CrProc b,(String,Int))]
+convertData :: CrData -> [(CrProc,(String,Int))]
 convertData (CrData _ _ cs)=zipWith convertDataCon [0..] cs
 
 -- tag, not arity
-convertDataCon :: Int -> (CrName,[CrAnnot a CrType]) -> (CrProc b,(String,Int))
+convertDataCon :: Int -> (CrName,[CrType]) -> (CrProc,(String,Int))
 convertDataCon t (name,xs)=
-    (CrProc (wrap name) (map wrap args) $ wrap $ CrCstr t $ map (wrap . CrVar) args,(name,t))
+    (CrProc name args $ CrCstr t $ map CrVar args,(name,t))
     where
-        wrap=CrA undefined
         args=take n $ stringSeq "#d"
         n=length xs
 
 
 
-
+-- | Resolve _ in 'Case'
+simplify :: Core -> Core
+simplify (Core ds ps)=Core ds ps'
+    where ps'=ps
+    
 
 
 -- | Compile one super combinator to 'GMCode'
@@ -70,27 +74,27 @@ convertDataCon t (name,xs)=
 --
 -- * must not contain lambda
 --
-compileP :: M.Map String Int -> CrProc a -> (String,[GMCode])
+compileP :: M.Map String Int -> CrProc -> (String,[GMCode])
 compileP mc (CrProc name args expr)=
-    (unA name,F.toList $ compileE mc mv (unA expr)><S.fromList [Slide $ n+1])
+    (name,F.toList $ compileE mc mv expr><S.fromList [Slide $ n+1])
     where
         n=length args
-        mv=M.fromList $ zip (map unA args) (map PushArg [1..])
+        mv=M.fromList $ zip args (map PushArg [1..])
 
-compileE :: M.Map String Int -> M.Map String GMCode -> CrExpr a -> S.Seq GMCode 
-compileE mc mv (CrApp e0 e1)=(compileE mc mv (unA e1) >< compileE mc (shift mv 1) (unA e0)) |> MkApp
+compileE :: M.Map String Int -> M.Map String GMCode -> CrExpr -> S.Seq GMCode 
+compileE mc mv (CrApp e0 e1)=(compileE mc mv e1 >< compileE mc (shift mv 1) e0) |> MkApp
 compileE mc mv (CrVar v)=S.singleton $ maybe (PushSC v) id $ M.lookup v mv
 compileE mc mv (CrByte x)=S.singleton $ PushByte x
 compileE mc mv (CrCstr t es)=
-    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map unA $ reverse es)) |> Pack t (length es)
-compileE mc mv (CrCase ec cs)=compileE mc mv (unA ec) |> Reduce RAny |> Case (map f cs)
+    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (reverse es)) |> Pack t (length es)
+compileE mc mv (CrCase ec cs)=compileE mc mv ec |> Reduce RAny |> Case (map f cs)
     where
-        f (con,vs,e)=(mc M.! con,F.toList $ UnPack (length vs) <| compileE mc (insMV vs) (unA e))
-        insMV vs=M.union (shift mv $ length vs) $ M.fromList $ zip (map unA vs) (map Push [0..])
+        f (con,vs,e)=(M.findWithDefault (error $ "cE:not found:"++con) con mc,F.toList $ UnPack (length vs) <| compileE mc (insMV vs) e)
+        insMV vs=M.union (shift mv $ length vs) $ M.fromList $ zip vs (map Push [0..])
             -- do you need reverse $ vs here?
 compileE mc mv (CrLet False bs e)=
-    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map (unA . snd) $ reverse bs)) >< compileE mc mv' (unA e)
-    where mv'=M.union (shift mv $ length bs) $ M.fromList $ zip (map (unA . fst) bs) (map Push [0..])
+    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map snd $ reverse bs)) >< compileE mc mv' e
+    where mv'=M.union (shift mv $ length bs) $ M.fromList $ zip (map fst bs) (map Push [0..])
 compileE mc mv (CrLet _ _ _)=error "compileE: letrec"
 compileE mc mv (CrLm _ _)=error "compileE: lambda"
 
@@ -105,41 +109,42 @@ shift m d=M.map f m
 
 
 
--- | Pretty printer for 'CoreP'
-pprintCoreP :: CoreP -> String
-pprintCoreP (Core ds ps)=compileSB $ U.Pack $ map (pprintData (\_ x->x)) ds++map (pprintProc (\_ x->x)) ps
+-- | Pretty printer for 'Core'
+pprintCore :: Core -> String
+pprintCore (Core ds ps)=compileSB $ U.Pack $ map pprintData ds++map pprintProc ps
 
 
-pprintData :: (a -> String -> String) -> CrData a -> StrBlock
-pprintData f (CrData name xs cons)=Line $ U.Pack
+pprintData :: CrData -> StrBlock
+pprintData (CrData name xs cons)=Line $ U.Pack
     [Line $ Span [Prim "data",Prim name]
     ,Indent $ U.Pack $ zipWith cv cons ("=":repeat "|")]
     where cv (name,xs) eq=Line $ Span [U.Pack [Prim eq,Prim name],Prim $ show $ length xs]
 
-pprintProc f (CrProc n as e)=Line $ U.Pack
-    [Line $ U.Pack [Span $ map (pprintAName f) $ n:as,Prim "="]
-    ,Indent $ Line $ pprintAExpr f e]
+pprintProc (CrProc n as e)=Line $ U.Pack
+    [Line $ U.Pack [Span $ map pprintName $ n:as,Prim "="]
+    ,Indent $ Line $ pprintExpr e]
 
-pprintAExpr f (CrA ea e)=pprintExpr f e
-pprintAName f (CrA na n)=Prim $ f na n
+pprintName n=Prim n
 
-pprintExpr f (CrLm ns e)=U.Pack $
-    [U.Pack [Prim "\\",Span (map (pprintAName f) ns)]
-    ,U.Pack [Prim "->",pprintAExpr f e]]
-pprintExpr f (CrVar x)=Prim x
-pprintExpr f (CrCase e as)=U.Pack $
-    [Line $ Span [Prim "case",pprintAExpr f e,Prim "of"]
+pprintExpr (CrLm ns e)=U.Pack $
+    [U.Pack [Prim "\\",Span (map pprintName ns)]
+    ,U.Pack [Prim "->",pprintExpr e]]
+pprintExpr (CrVar x)=Prim x
+pprintExpr (CrCase e as)=U.Pack $
+    [Line $ Span [Prim "case",pprintExpr e,Prim "of"]
     ,Indent $ U.Pack $ map cv as]
-    where cv (con,vs,e)=Line $ Span [Span $ Prim con:map (pprintAName f) vs,Prim "->",pprintAExpr f e]
-pprintExpr f (CrLet flag binds e)=Span $
+    where
+        cv0 (v,e)=[Line $ Span [pprintName v,Prim "->",pprintExpr e]]
+        cv (con,vs,e)=Line $ Span [Span $ Prim con:map pprintName vs,Prim "->",pprintExpr e]
+pprintExpr (CrLet flag binds e)=Span $
     [Span $ (Prim $ if flag then "letrec" else "let"):map cv binds
     ,Prim "in"
-    ,pprintAExpr f e]
-    where cv (v,e)=U.Pack [pprintAName f v,Prim "=",pprintAExpr f e,Prim ";"]
-pprintExpr f (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintAExpr f e0,pprintAExpr f e1],Prim ")"]
-pprintExpr f (CrByte n)=Prim $ show n
+    ,pprintExpr e]
+    where cv (v,e)=U.Pack [pprintName v,Prim "=",pprintExpr e,Prim ";"]
+pprintExpr (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintExpr e0,pprintExpr e1],Prim ")"]
+pprintExpr (CrByte n)=Prim $ show n
 -- pprintExpr f (Cr
-pprintExpr f e=error $ "pprintExpr:"++show e
+pprintExpr e=error $ "pprintExpr:"++show e
 
 
 
@@ -175,24 +180,18 @@ instance Show CrType where
     show (CrTyCon x)=x
 
 -- | expression
-data CrExpr a
-    =CrLm   [CrAName a] (CrAExpr a)
-    |CrApp  (CrAExpr a) (CrAExpr a)
-    |CrLet  Bool [(CrAName a,CrAExpr a)] (CrAExpr a) -- ^ rec?
-    |CrCstr Int [CrAExpr a]
-    |CrCase (CrAExpr a) [(String,[CrAName a],CrAExpr a)]
+data CrExpr
+    =CrLm   [CrName] CrExpr
+    |CrApp  CrExpr CrExpr
+    |CrLet  Bool [(CrName,CrExpr)] CrExpr -- ^ rec?
+    |CrCstr Int [CrExpr]
+    |CrCase CrExpr [(String,[CrName],CrExpr)]
     |CrVar  CrName
     |CrByte Int
     deriving(Show)
 
--- | Annotation
-data CrAnnot a s=CrA a s deriving(Show)
-type CrAName a=CrAnnot a CrName
-type CrAExpr a=CrAnnot a (CrExpr a)
 
-unA (CrA _ s)=s
-
--- | 
+-- | identifier
 type CrName=String
 
 

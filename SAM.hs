@@ -216,10 +216,8 @@ desugarStmt s=[s]
 -- | Case numbers must be sorted in ascending order.
 -- _dt must be 0 before and after dispatch
 -- r must be 0 after dispatch
-expandDispatch r []=error "empty dispatch"
-expandDispatch r [(n,e)]
-    |abs n<3   = e++[Val (Register r) $ negate n]
-    |otherwise = e++[Clear (Register r)]
+expandDispatch r []=error "expandDispatch: empty dispatch"
+expandDispatch r [(n,e)]=[Clear (Register r)]++e
 expandDispatch r ((n0,e0):cs)=
     [Val (Register "_dt") 1
     ,Val (Register r) (negate $ n0)
@@ -294,7 +292,7 @@ pprintStmt :: Stmt -> StrBlock
 pprintStmt (Dispatch n cs)=Pack [t,Indent b]
     where
         t=Line $ Span [Prim "dispatch",Prim n]
-        b=Pack $ map pprintCase cs
+        b=Pack $ map pprintCase $ map (first show) cs
 pprintStmt (While ptr ss)=Pack [t,Indent b]
     where
         t=Line $ Span [Prim "while",Prim $ show ptr]
@@ -311,8 +309,8 @@ pprintStmt (Input p)=Line $ Span [Prim "in",Prim $ show p]
 pprintStmt (Output p)=Line $ Span [Prim "out",Prim $ show p]
 pprintStmt (Comment s)=Line $ Span [Prim "--",Prim s]
 
-pprintCase :: (Int,[Stmt]) -> StrBlock
-pprintCase (n,ss)=Pack [Line $ Prim $ show n,Indent $ Pack $ map pprintStmt ss]
+pprintCase :: (String,[Stmt]) -> StrBlock
+pprintCase (l,ss)=Pack [Line $ Prim l,Indent $ Pack $ map pprintStmt ss]
 
 
 
@@ -546,7 +544,7 @@ execStmt p (Dispatch r cs)=do
     x<-readPtr p (Register r)
     writePtr p (Register r) 0
     let caluse=lookup (fromIntegral x) cs
-    maybe (error $ "SAMi: unhandled value in dispatch: "++show (x,p,r)) (execStmts p) caluse
+    maybe (error $ "SAMi: dispatch:"++show (x,r,p)) (execStmts p) caluse
 execStmt p (Clear ptr)=writePtr p ptr 0
 execStmt p (Input ptr)=liftIO getChar >>= writePtr p ptr . fromIntegral . ord
 execStmt p (Output ptr)=readPtr p ptr >>= liftIO . putChar . chr . fromIntegral

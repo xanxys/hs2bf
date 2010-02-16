@@ -62,7 +62,7 @@ compile m
         codeSpace=ceiling $ log (fromIntegral $ M.size m+2)/log 256
         heapSpace=1
         ss=map (("S"++) . show) [0..heapSpace-1]
-        hs=["H0"] 
+        hs=["H0"]
 
 simplify :: M.Map String [GMCode] -> Process (M.Map String [GMCode])
 simplify=return . elimReduce
@@ -83,8 +83,8 @@ aux n cs (Case as:xs)
     |otherwise = (n,reverse $ Case as'':cs):rs
     where
         as'=map (\(k,x)->(k,aux (n++"_d"++show k) [] x)) as
-        rs=concatMap (tail . snd) as'
         as''=map (second $ (++xs) . snd . head) as'
+        rs=concatMap (tail . snd) as'
 aux ns cs (x:xs)=aux ns (x:cs) xs
 
 
@@ -249,6 +249,28 @@ compileCode m (Case cs:is)=contWith m Origin is $
     ,Dispatch "tag" $ map (second $ flip (contWith m HeapA) []) cs
     ,Delete "tag"
     ]
+compileCode m (UError s:_)=
+    [Clear ptr
+    ,Val ptr 117
+    ,Output ptr -- u
+    ,Val ptr (-7)
+    ,Output ptr -- n
+    ,Val ptr (-10)
+    ,Output ptr -- d
+    ,Val ptr 1
+    ,Output ptr -- e
+    ,Val ptr 1
+    ,Output ptr -- f
+    ,Val ptr 3
+    ,Output ptr -- i
+    ,Val ptr 5
+    ,Output ptr -- n
+    ,Val ptr (-9)
+    ,Output ptr -- e
+    ,Val ptr (-1)
+    ,Output ptr -- d
+    ]
+    where ptr=Memory "S0" 0
 
 
     
@@ -574,6 +596,7 @@ data GMCode
 --    |Alloc Int
     |Reduce RHint -- ^ reduce stack top to WHNF
     |Swap -- ^ used for implementing 'elimReduce'
+    |UError String -- ^ output the given string with undefined consequence
     deriving(Show)
 
 data RHint
@@ -592,8 +615,10 @@ pprintGMCs :: [GMCode] -> StrBlock
 pprintGMCs=Indent . U.Pack . map pprintGMC
 
 pprintGMC :: GMCode -> StrBlock
-pprintGMC (Case cs)=U.Pack [Line $ Prim "Case",Indent $ U.Pack $ map f $ sortBy (comparing fst) cs]
-    where f (n,x)=U.Pack [Line $ Prim $ show n++"->",pprintGMCs x]
+pprintGMC (Case cs)=U.Pack [Line $ Prim "Case",Indent $ U.Pack $ map f as]
+    where
+        as=map (first show) (sortBy (comparing fst) cs)
+        f (label,x)=U.Pack [Line $ Prim $ label++"->",pprintGMCs x]
 pprintGMC c=Line $ Prim $ show c
 
 
@@ -682,7 +707,7 @@ evalGM fl fs (Slide n:xs)=do
 evalGM fl fs (PushByte x:xs)=alloc (Const x) >>= push >> evalGM fl fs xs
 evalGM fl fs (Case cs:xs)=do
     Struct t _<-refStack 0 >>= refHeap
-    maybe (error $ "GMi: unhandled tag "++show t) (evalGM fl fs . (++xs)) $ lookup t cs
+    maybe (error $ "GMi: Case:"++show t) (evalGM fl fs . (++xs)) $ lookup t cs
 evalGM fl fs (UnPack n:xs)=do
     Struct _ cs<-pop >>= refHeap
     when (length cs/=n) (error $ "GMi: UnPack arity error")

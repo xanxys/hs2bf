@@ -25,6 +25,7 @@
 --
 -- * #xa_1... : pattern matching
 module Front where
+import Control.Arrow
 import Control.Exception
 import Control.Monad
 import Control.Monad.Error
@@ -46,7 +47,7 @@ import Core
 -- | Necessary information for translating module name to 'FilePath'.
 data ModuleEnv=ModuleEnv [FilePath]
 
-compile :: [HsModule] -> Process CoreP
+compile :: [HsModule] -> Process Core
 compile ms=return $ sds $ mergeModules $ map (mds . wds) ms
 
 -- | Search all necesarry modules and parse them all (if possible).
@@ -104,7 +105,7 @@ firstM f (x:xs)=do
 -- | /strong/ desugar
 -- Replaces all implicit pattern matching with explicit cases.
 -- Explicit modification of SrcLoc for error reporting in later process.
-sds :: HsModule -> CoreP
+sds :: HsModule -> Core
 sds (HsModule _ _ _ _ decls)=Core (map convDataDecl ds) (map convFunDecl fs)
     where
         ds=filter isDataDecl decls
@@ -125,42 +126,40 @@ isPatBind (HsPatBind _ _ _ _)=True
 isPatBind _=False
 
 
-convDataDecl :: HsDecl -> CrData (LocHint,Maybe CrKind)
+convDataDecl :: HsDecl -> CrData
 convDataDecl (HsDataDecl loc ctx (HsIdent name) vars cons derv)=
     CrData name [] $ map convDataCon cons
 
-convDataCon :: HsConDecl -> (CrName,[CrAnnot (LocHint,Maybe CrKind) CrType])
-convDataCon (HsConDecl loc (HsIdent name) ts)=(name,replicate (length ts) (CrA (show loc,Nothing) undefined))
+convDataCon :: HsConDecl -> (CrName,[CrType])
+convDataCon (HsConDecl loc (HsIdent name) ts)=(name,replicate (length ts) undefined)
 
-convFunDecl :: HsDecl -> CrProc (LocHint,Maybe CrType)
+convFunDecl :: HsDecl -> CrProc
 convFunDecl (HsFunBind [HsMatch loc (HsIdent n) args (HsUnGuardedRhs e) []])
-    =CrProc (CrA (h,Nothing) n) (map f args) (convExp h e)
+    =CrProc n (map f args) (convExp e)
     where
-        f (HsPVar (HsIdent x))=CrA (h,Nothing) x
+        f (HsPVar (HsIdent x))=x
         f x=error $ show x
-        
-        h=showLoc loc
+
+
 convDecl d=error $ "convDecl:ERROR:"++show d
 
-convExp :: LocHint -> HsExp -> CrAExprP
-convExp _ (HsLambda loc as e)=CrA (h,Nothing) $ CrLm (map f as) (convExp h e)
+convExp :: HsExp -> CrExpr
+convExp (HsLambda loc as e)=CrLm (map f as) (convExp e)
     where
-        f (HsPVar (HsIdent x))=CrA (h,Nothing) x
-        h=showLoc loc
-convExp h (HsVar (UnQual (HsIdent x)))=CrA (h,Nothing) (CrVar x)
-convExp h (HsApp e0 e1)=CrA (h,Nothing) $ CrApp (convExp h e0) (convExp h e1)
-convExp h e@(HsCase _ _)=convFullCase h e
+        f (HsPVar (HsIdent x))=x
+convExp (HsVar (UnQual (HsIdent x)))=CrVar x
+convExp (HsApp e0 e1)=CrApp (convExp e0) (convExp e1)
+convExp e@(HsCase _ _)=convFullCase e
+convExp (HsLit (HsInt n))=error "convExp: int"-- CrA (h,Nothing) $ CrInt $ fromIntegral n
+convExp (HsLit (HsChar ch))=CrByte $ fromIntegral $ ord ch
 -- convExp h (HsExpTyeSig
-convExp h (HsLit (HsInt n))=error "convExp: int"-- CrA (h,Nothing) $ CrInt $ fromIntegral n
-convExp h (HsLit (HsChar ch))=CrA (h,Nothing) $ CrByte $ fromIntegral $ ord ch
-convExp _ e=error $ "ERROR:convExp:"++show e
+convExp e=error $ "ERROR:convExp:"++show e
 
 
 
-
-type CrAExprP=CrAExpr (LocHint,Maybe CrType)
 
 -- | Convert 'HsCase'(desugared) to 'CrExpr'
+--
 -- Sort 'HsAlt's by constructor and use 'procPartialCase' for each constructor.
 --
 -- One of the following:
@@ -168,22 +167,22 @@ type CrAExprP=CrAExpr (LocHint,Maybe CrType)
 -- * HsAlt (HsPApp ...
 --
 -- * HsAlt (HsPVar ...
-convFullCase :: LocHint -> HsExp -> CrAExprP
-convFullCase h (HsCase e as)=CrA (h,Nothing) $ CrCase (convExp h e) (map f $ M.assocs m')
+convFullCase :: HsExp -> CrExpr
+convFullCase (HsCase e as)=case md of
+    Nothing    -> CrCase (convExp e) cs
+    Just (v,f) -> CrLet False [(v,convExp e)] $ CrCase (CrVar v) $ ("",[],convExp f):cs
     where
-        m'=M.delete "" m
-        m0=case M.lookup "" m of
-               Nothing -> CrA (h,Nothing) $ CrVar "undefined"
-               Just (_,[(_,x)]) -> x
-        m=M.map (\(arity,xs)->(arity,map (\(ps,e)->(ps,convExp h e)) xs)) $ sortAlts as
+        cs=mapMaybe cv $ M.assocs $ M.map (second $ map $ second $ convExp) mn
         
-        f (cons,(arity,as))=let vs=take arity $ stringSeq "#x"
-                            in (cons,map (CrA (h,Nothing)) vs,convSeqCase m0 (map (CrA (h,Nothing) . CrVar) vs) as)
+        (mn,md)=sortAlts as
+        cv (cons,(arity,cs))=let vs=take arity $ stringSeq "#x"
+                             in do{x<-convSeqCase (liftM (convExp . snd) md) (map CrVar vs) cs; return (cons,vs,x)}
             
 
 
 
 -- | Transform case of multiple vars. Note that constructors are already removed by 'procFullCase'.
+--
 -- example:
 --  
 --  > case v1 v2 v3 of
@@ -198,9 +197,9 @@ convFullCase h (HsCase e as)=CrA (h,Nothing) $ CrCase (convExp h e) (map f $ M.a
 --  >    _ -> case v1 v2 v3 of
 --  >             p21 p22 p23 -> e2
 --  >             _ -> fail
-convSeqCase :: CrAExprP -> [CrAExprP] -> [([HsPat],CrAExprP)] -> CrAExprP
+convSeqCase :: Maybe CrExpr -> [CrExpr] -> [([HsPat],CrExpr)] -> Maybe CrExpr
 convSeqCase fail vs []=fail
-convSeqCase fail vs ((ps,e):as)=convAndCase (convSeqCase fail vs as) e (zip vs ps)
+convSeqCase fail vs ((ps,e):as)=return $ convAndCase (convSeqCase fail vs as) e (zip vs ps)
 
 -- | Transform multiple vars to
 -- 
@@ -216,27 +215,28 @@ convSeqCase fail vs ((ps,e):as)=convAndCase (convSeqCase fail vs as) e (zip vs p
 -- >              _  -> fail(other 'HsAlt')
 -- >    _ -> fail(other 'HsAlt')
 --
-convAndCase :: CrAExprP -> CrAExprP -> [(CrAExprP,HsPat)] -> CrAExprP
+convAndCase :: Maybe CrExpr -> CrExpr -> [(CrExpr,HsPat)] -> CrExpr
 convAndCase fail succ []=succ
-convAndCase fail succ ((v,pat):cs)=CrA ("?",Nothing) $ case pat of
+convAndCase fail succ ((v,pat):cs)=case pat of
     HsPVar (HsIdent p) ->
-        CrLet False [(CrA ("?",Nothing) p,v)] next
+        CrLet False [(p,v)] next
     HsPApp (UnQual (HsIdent n)) args ->
-        CrCase v [(n,[CrA ("?",Nothing) ""],next),("",[],fail)]
+        CrCase v $ maybe [] (\x->[("",[],x)]) fail++[(n,[""],next)]
     where next=convAndCase fail succ cs
 
 
 -- | Sort ['HsAlt'] by constructors.
-sortAlts :: [HsAlt] -> M.Map String (Int,[([HsPat],HsExp)])
-sortAlts []=M.empty
+sortAlts :: [HsAlt] -> (M.Map String (Int,[([HsPat],HsExp)]),Maybe (String,HsExp))
+sortAlts []=(M.empty,Nothing)
 sortAlts ((HsAlt loc pat (HsUnGuardedAlt e) []):as)=
     case pat of
         HsPApp (UnQual (HsIdent n)) args -> 
-            M.insertWith merge n (length args,[(args,e)]) m
-        _ -> M.singleton "" (0,[([],e)])
+            (M.insertWith merge n (length args,[(args,e)]) mn,md)
+        HsPVar (HsIdent v) -> (M.empty,Just (v,e))
+        x -> error $ "sortAlts:"++show x
     where
         merge (n0,xs0) (n1,xs1)=if n0==n1 then (n0,xs0++xs1) else error $ "Unmatched arity@"++show loc
-        m=sortAlts as
+        (mn,md)=sortAlts as
 
 
 
@@ -310,7 +310,7 @@ mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs exp
         args=map (HsIdent . ("#a"++) . show) [0..length ps0-1]
         expr=HsCase (multiApp (stdTuple $ length args) $ map (HsVar . UnQual) args) $ map genAlt ms
         
-        genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (HsPTuple ps) (HsUnGuardedAlt e) []
+        genAlt (HsMatch loc _ ps (HsUnGuardedRhs e) [])=HsAlt loc (wds $ HsPTuple ps) (HsUnGuardedAlt e) []
 
 -- | Eliminate pattern matching in lambda arguments.
 eliminatePLambda :: HsExp -> HsExp
@@ -447,8 +447,9 @@ instance WeakDesugar HsQName where
 instance WeakDesugar HsPat where
     wds (HsPInfixApp p0 q p1)=HsPApp (wds q) [wds p0,wds p1]
     wds (HsPParen p)=wds p
-    wds (HsPList ps)=HsPList (map wds ps)
-    wds (HsPTuple ps)=HsPApp (UnQual (HsIdent $ "#T"++show (length ps))) (map wds ps)
+    wds (HsPList ps)=foldr (\x y->HsPApp c [x,y]) n $ map wds ps
+        where c=UnQual (HsIdent "XCons"); n=HsPApp (UnQual $ HsIdent "XNil") []
+    wds (HsPTuple ps)=HsPApp (UnQual (HsIdent $ "XT"++show (length ps))) (map wds ps)
     wds (HsPApp n ps)=HsPApp (wds n) (map wds ps)
     wds (HsPVar n)=HsPVar $ wds n
     wds (HsPWildCard)=HsPWildCard
@@ -484,7 +485,7 @@ stdVar :: String -> HsExp
 stdVar=HsVar . UnQual . HsIdent
 
 stdTuple :: Int -> HsExp
-stdTuple=stdVar . ("#T"++) . show
+stdTuple=stdVar . ("XT"++) . show
 
 opToExp :: HsQOp -> HsExp
 opToExp (HsQVarOp n)=HsVar n

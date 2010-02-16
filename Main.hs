@@ -109,7 +109,7 @@ execCommand (Compile opt from)=do
         sam'=sam  >>= SAM.simplify
         bf  =sam' >>= SAM.compile
     case tolang opt of
-        LangCore _  -> capProcess core Core.pprintCoreP
+        LangCore _  -> capProcess core Core.pprintCore
         LangGM  ""  -> capProcess gm  GMachine.pprintGM
         LangGM  "r" -> capProcess gm' GMachine.pprintGM
         LangSAM ""  -> capProcess sam SAM.pprint
