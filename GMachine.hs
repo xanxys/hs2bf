@@ -605,8 +605,8 @@ data RHint
     |RAny
     deriving(Show)
 
-pprintGM :: M.Map String [GMCode] -> String
-pprintGM=compileSB . U.Pack . map (uncurry pprintGMF) . M.assocs
+pprint :: M.Map String [GMCode] -> String
+pprint=compileSB . U.Pack . map (uncurry pprintGMF) . M.assocs
 
 pprintGMF :: String -> [GMCode] -> StrBlock
 pprintGMF name cs=Line $ U.Pack [Line $ U.Pack [Prim name,Prim ":"],pprintGMCs cs]
@@ -644,11 +644,11 @@ newtype Address=Address Int deriving(Show,Eq,Ord)
 
 
 
-interpretGM :: M.Map String [GMCode] -> IO ()
-interpretGM fs=evalStateT (evalGM False fs []) (makeEmptySt "main")
+interpret :: M.Map String [GMCode] -> IO ()
+interpret fs=evalStateT (evalGM False fs []) (makeEmptySt "main")
 
-interpretGMR :: M.Map String [GMCode] -> IO ()
-interpretGMR fs=evalStateT (evalGM True fs []) (makeEmptySt "main")
+interpretR :: M.Map String [GMCode] -> IO ()
+interpretR fs=evalStateT (evalGM True fs []) (makeEmptySt "main")
 
 makeEmptySt :: String -> GMInternal
 makeEmptySt entry=runIdentity $ execStateT (alloc (Combinator entry) >>= push) $ GMInternal [] M.empty

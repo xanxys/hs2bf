@@ -15,10 +15,9 @@ import Control.Arrow
 import Control.Monad.Error
 import Control.Monad.State
 import Control.Monad.Identity
-import qualified Data.IntMap as IM
 import Data.List
 import Data.Word
-
+import qualified Data.IntMap as IM
 
 
 -- | Process that may fail with ['CompileError']
@@ -145,4 +144,8 @@ mapAt ix0 f=zipWith g [0..]
 fst3 (x,_,_)=x
 snd3 (_,y,_)=y
 thr3 (_,_,z)=z
+
+
+equaling :: Eq b => (a -> b) -> (a -> a -> Bool)
+equaling f x y=f x==f y
 

@@ -77,49 +77,50 @@ parseOption (term:xs)=case term of
 
 execCommand :: Command -> IO ()
 execCommand (ShowMessage x)=putStr x
+execCommand (Interpret opt from)=partialChain opt from $
+    (error "Core interpreter is not implemented"
+    ,error "Core interpreter is not implemented"
+    ,f GMachine.interpret
+    ,f GMachine.interpretR
+    ,f SAM.interpret
+    ,f SAM.interpret
+    ,f Brainfuck.interpret
+    )
+    where
+        f g=runProcessWithIO (\x->setio >> g x)
+        setio=hSetBuffering stdin NoBuffering >> hSetBuffering stdout NoBuffering
+execCommand (Compile opt from)=partialChain opt from $
+    (f Core.pprint
+    ,f Core.pprint
+    ,f GMachine.pprint
+    ,f GMachine.pprint
+    ,f SAM.pprint
+    ,f SAM.pprint
+    ,f Brainfuck.pprint
+    )
+    where f g=runProcessWithIO (putStr . g)
 
-execCommand (Interpret opt from)=do
+partialChain opt from (c0,c1,g0,g1,s0,s1,b)=do
     let (mod,env)=analyzeName from
     xs<-Front.collectModules env mod
-    let core=xs >>= Front.compile
-        gm  =core >>= Core.compile
+    let cr  =xs   >>= Front.compile
+        cr' =cr   >>= Core.simplify
+        gm  =cr'  >>= Core.compile
         gm' =gm   >>= GMachine.simplify
         sam =gm'  >>= GMachine.compile
         sam'=sam  >>= SAM.simplify
         bf  =sam' >>= SAM.compile
-    -- byte stream
-    hSetBuffering stdin NoBuffering
-    hSetBuffering stdout NoBuffering
     case tolang opt of
-        LangCore _  -> error "Core interpreter is not implemented"
-        LangGM ""   -> capProcess gm  GMachine.interpretGM
-        LangGM "r"  -> capProcess gm' GMachine.interpretGMR
-        LangSAM ""  -> capProcess sam  SAM.interpret
-        LangSAM "f" -> capProcess sam' SAM.interpret
-        LangBF      -> capProcess bf Brainfuck.interpret
-    where capProcess=flip runProcessWithIO
-
-execCommand (Compile opt from)=do
-    let (mod,env)=analyzeName from
-    xs<-Front.collectModules env mod
-    let core=xs   >>= Front.compile
-        gm  =core >>= Core.compile
-        gm' =gm   >>= GMachine.simplify
-        sam =gm'  >>= GMachine.compile
-        sam'=sam  >>= SAM.simplify
-        bf  =sam' >>= SAM.compile
-    case tolang opt of
-        LangCore _  -> capProcess core Core.pprintCore
-        LangGM  ""  -> capProcess gm  GMachine.pprintGM
-        LangGM  "r" -> capProcess gm' GMachine.pprintGM
-        LangSAM ""  -> capProcess sam SAM.pprint
-        LangSAM "f" -> capProcess sam' SAM.pprint
-        LangBF      -> capProcess bf Brainfuck.pprint
-    where capProcess pr f=runProcessWithIO (putStr . f) pr
-
+        LangCore ""  -> c0 cr
+        LangCore "s" -> c1 cr'
+        LangGM  ""   -> g0 gm
+        LangGM  "r"  -> g1 gm'
+        LangSAM ""   -> s0 sam
+        LangSAM "f"  -> s1 sam'
+        LangBF       -> b  bf
 
 version :: String
-version="version 0.1\n"
+version="version 0.2\n"
 
 help :: String
 help=unlines $
@@ -133,11 +134,12 @@ help=unlines $
     ,"option:"
     ,"  -o <file> : output path"
     ,"  -Sc : to Core code"
+    ,"  -Scs: to Core code (simplified)"
     ,"  -Sg : to GMachine"
     ,"  -Sgr: to GMachine (simplified)"
     ,"  -Ss : to SAM"
     ,"  -Ssf: to SAM (most simplified)"
-    ,"  -Sg : to SCGR"
+    ,"  -Sr : to SCGR"
     ,"  -Sb : to BF"
     ,"  --addr n : use n byte for pointer arithmetic"
     ,"  --debug : include detailed error message (this will make the program a LOT larger)"
@@ -154,8 +156,5 @@ help=unlines $
 analyzeName :: String -> (String,Front.ModuleEnv)
 analyzeName n=(takeBaseName n,Front.ModuleEnv [dirPrefix++takeDirectory n,"./test"])
     where dirPrefix=if isAbsolute n then "" else "./"
-
-
-
 
 

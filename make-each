@@ -11,6 +11,7 @@ end
     
 
 compile Core -Sc
+and compile Core-s -Scs
 and compile GMachine -Sg
 and compile GMachine-r -Sgr
 and compile SAM -Ss

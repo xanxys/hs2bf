@@ -16,11 +16,14 @@
 --
 -- are done in Core language
 module Core where
-import qualified Data.Foldable as F
+import Control.Arrow
+import Data.Ord
 import Data.List
 import qualified Data.Map as M
+import qualified Data.Set as S
+import qualified Data.Foldable as F
 import Data.Sequence((><),(|>),(<|))
-import qualified Data.Sequence as S
+import qualified Data.Sequence as Q
 
 import Util as U hiding(Pack)
 import qualified Util as U
@@ -39,9 +42,8 @@ data CrProc=CrProc CrName [CrName] CrExpr
 
 
 compile :: Core -> Process (M.Map String [GMCode])
-compile core=return $ M.fromList $ undef:map (compileP m) (ps++pds)
+compile (Core ds ps)=return $ M.fromList $ undef:map (compileP m) (ps++pds)
     where
-        Core ds ps=Core.simplify core
         m=M.fromList cons
         (pds,cons)=unzip $ concatMap convertData ds
         undef=("undefined",[UError "undefined"])
@@ -61,10 +63,36 @@ convertDataCon t (name,xs)=
 
 
 
--- | Resolve _ in 'Case'
-simplify :: Core -> Core
-simplify (Core ds ps)=Core ds ps'
-    where ps'=ps
+-- | Resolve "" in 'Case'
+simplify :: Core -> Process Core
+simplify (Core ds ps)=return $ Core ds $ map (smplP table) ps
+    where
+        table=M.fromList $ concatMap (mkP . map snd) $ groupBy (equaling fst) $ concatMap conCT ds
+        mkP xs=map (\x->(fst x,S.fromList xs)) xs
+
+conCT :: CrData -> [(CrName,(CrName,Int))]
+conCT (CrData n _ xs)=zip (repeat n) (map (second length) xs)
+
+smplP :: M.Map String (S.Set (String,Int)) -> CrProc -> CrProc
+smplP t (CrProc name args expr)=CrProc name args $ smplE t expr
+
+smplE :: M.Map String (S.Set (String,Int)) -> CrExpr -> CrExpr
+smplE t (CrApp e0 e1)=CrApp (smplE t e0) (smplE t e1)
+smplE t (CrCstr tag es)=CrCstr tag $ map (smplE t) es
+smplE t (CrLet f bs e)=CrLet f (map (second $ smplE t) bs) $ smplE t e
+smplE t (CrLm vs e)=CrLm vs $ smplE t e
+smplE t (CrCase ec cs)
+    |null cocs      = CrCase (smplE t ec) $ nrmcons
+    |length cocs==1 = CrCase (smplE t ec) $ cocons (thr3 $ head cocs)++nrmcons
+    |otherwise      = error "smplE: more than 2 defaults!"
+    where
+        (cocs,nrmcs)=partition (null . fst3) cs
+        
+        nrmcons=map (\(x,y,z)->(x,y,smplE t z)) nrmcs
+        cocons x=map (\(c,n)->(c,replicate n "",smplE t x)) $ F.toList s
+        s=S.difference (t M.! (fst $ head cons)) (S.fromList cons)
+        cons=filter (not . null . fst) $ map (\(x,y,_)->(x,length y)) cs
+smplE t x=x
     
 
 
@@ -76,15 +104,15 @@ simplify (Core ds ps)=Core ds ps'
 --
 compileP :: M.Map String Int -> CrProc -> (String,[GMCode])
 compileP mc (CrProc name args expr)=
-    (name,F.toList $ compileE mc mv expr><S.fromList [Slide $ n+1])
+    (name,F.toList $ compileE mc mv expr><Q.fromList [Slide $ n+1])
     where
         n=length args
         mv=M.fromList $ zip args (map PushArg [1..])
 
-compileE :: M.Map String Int -> M.Map String GMCode -> CrExpr -> S.Seq GMCode 
+compileE :: M.Map String Int -> M.Map String GMCode -> CrExpr -> Q.Seq GMCode 
 compileE mc mv (CrApp e0 e1)=(compileE mc mv e1 >< compileE mc (shift mv 1) e0) |> MkApp
-compileE mc mv (CrVar v)=S.singleton $ maybe (PushSC v) id $ M.lookup v mv
-compileE mc mv (CrByte x)=S.singleton $ PushByte x
+compileE mc mv (CrVar v)=Q.singleton $ maybe (PushSC v) id $ M.lookup v mv
+compileE mc mv (CrByte x)=Q.singleton $ PushByte x
 compileE mc mv (CrCstr t es)=
     concatS (zipWith (compileE mc) (map (shift mv) [0..]) (reverse es)) |> Pack t (length es)
 compileE mc mv (CrCase ec cs)=compileE mc mv ec |> Reduce RAny |> Case (map f cs)
@@ -98,8 +126,8 @@ compileE mc mv (CrLet False bs e)=
 compileE mc mv (CrLet _ _ _)=error "compileE: letrec"
 compileE mc mv (CrLm _ _)=error "compileE: lambda"
 
-concatS :: [S.Seq a] -> S.Seq a
-concatS=foldr (><) S.empty
+concatS :: [Q.Seq a] -> Q.Seq a
+concatS=foldr (><) Q.empty
 
 shift :: M.Map String GMCode -> Int -> M.Map String GMCode
 shift m d=M.map f m
@@ -110,8 +138,8 @@ shift m d=M.map f m
 
 
 -- | Pretty printer for 'Core'
-pprintCore :: Core -> String
-pprintCore (Core ds ps)=compileSB $ U.Pack $ map pprintData ds++map pprintProc ps
+pprint :: Core -> String
+pprint (Core ds ps)=compileSB $ U.Pack $ map pprintData ds++map pprintProc ps
 
 
 pprintData :: CrData -> StrBlock
