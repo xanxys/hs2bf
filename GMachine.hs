@@ -170,19 +170,49 @@ compileCode m (PushSC k:is)= -- scTag sc
     ,Delete "addr"
     ]
 compileCode m (MkApp:is)= -- appTag ap0 ap1
-    contWith m StackA is $ newFrame appTag [0,0] $ \pa->
+    contWith m HeapA is $ newFrame appTag [0,0] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
-    ]++
-    concatMap st2heap [2,1]++
-    st2heapFin
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,SAM.Alloc "tr1"
+    ,Move (Memory "S0" (-1)) [Register "tr1"]
+    ,SAM.Alloc "tr2"
+    ,Move (Memory "S0" (-2)) [Register "tr2"]
+    ,Copy (Register "addr") [Memory "S0" (-2)]
+    ,Locate (-2)
+    ,Inline "#stack1" []
+    ,Inline "#heapRef" ["addr"]
+    ,Delete "addr"
+    ,Move (Register "tr1") [Memory "H0" 2]
+    ,Delete "tr1"
+    ,Move (Register "tr2") [Memory "H0" 3]
+    ,Delete "tr2"
+    ]
+compileCode m (Pack t 0:is)=
+    contWith m StackA is $ newFrame structTag [t] $ \pa->
+    [SAM.Alloc "addr"
+    ,Copy pa [Register "addr"]
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
+    ,Move (Register "addr") [Memory "S0" 0]
+    ,Delete "addr"
+    ]
 compileCode m (Pack t n:is)= -- stTag t x1...xn
-    contWith m StackA is $ newFrame structTag (t:replicate n 0) $ \pa->
+    contWith m HeapA is $ newFrame structTag (t:replicate n 0) $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
+    ,Inline "#heap1" []
+    ,Inline "#stackNew" []
     ]++
-    concatMap st2heap (reverse $ [1..n])++ -- pack struct members from back to front
-    st2heapFin
+    concatMap (\n->let r="tr"++show n in [SAM.Alloc r,Move (Memory "S0" $ negate n) [Register r]]) [1..n]++
+    [Copy (Register "addr") [Memory "S0" $ negate n]
+    ,Locate $ negate n
+    ,Inline "#stack1" []
+    ,Inline "#heapRef" ["addr"]
+    ,Delete "addr"
+    ]++
+    concatMap (\n->let r="tr"++show n in [Move (Register r) [Memory "H0" $ n+2],Delete r]) [1..n]
 compileCode m (UnPack 0:is)=contWith m StackA is $
     [Inline "#stackNew" []
     ,Clear (Memory "S0" (-1))

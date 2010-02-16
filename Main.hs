@@ -76,7 +76,7 @@ parseOption (term:xs)=case term of
 
 
 execCommand :: Command -> IO ()
-execCommand (ShowMessage x)=putStr x
+execCommand (ShowMessage x)=putStrLn x
 execCommand (Interpret opt from)=partialChain opt from $
     (error "Core interpreter is not implemented"
     ,error "Core interpreter is not implemented"
@@ -120,19 +120,20 @@ partialChain opt from (c0,c1,g0,g1,s0,s1,b)=do
         LangBF       -> b  bf
 
 version :: String
-version="version 0.2\n"
+version="version 0.3"
 
 help :: String
 help=unlines $
     ["Usage: hs2bf <command>"
     ,""
     ,"command:"
+    ,"  --help: show help"
     ,"  --version: show version"
     ,"  --run <module> <option>*: interpret <module>"
     ,"  --make <module> <option>*: compile <module>"
     ,""
     ,"option:"
-    ,"  -o <file> : output path"
+    ,"  -o <file> : output path (stdout if omitted)"
     ,"  -Sc : to Core code"
     ,"  -Scs: to Core code (simplified)"
     ,"  -Sg : to GMachine"
