@@ -221,8 +221,10 @@ convAndCase fail succ ((v,pat):cs)=case pat of
     HsPVar (HsIdent p) ->
         CrLet False [(p,v)] next
     HsPApp (UnQual (HsIdent n)) args ->
-        CrCase v $ maybe [] (\x->[("",[],x)]) fail++[(n,[""],next)]
-    where next=convAndCase fail succ cs
+        let das=take (length args) $ stringSeq "#x"
+        in CrCase v $ maybe [] (\x->[("",[],x)]) fail++[(n,das,convAndCase fail next $ zip (map CrVar das) args)]
+    where
+        next=convAndCase fail succ cs
 
 
 -- | Sort ['HsAlt'] by constructors.

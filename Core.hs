@@ -122,29 +122,45 @@ pprintData (CrData name xs cons)=Line $ U.Pack
 
 pprintProc (CrProc n as e)=Line $ U.Pack
     [Line $ U.Pack [Span $ map pprintName $ n:as,Prim "="]
-    ,Indent $ Line $ pprintExpr e]
+    ,Line $ Indent $ pprintExpr e]
 
+pprintName :: CrName -> StrBlock
 pprintName n=Prim n
 
-pprintExpr (CrLm ns e)=U.Pack $
-    [U.Pack [Prim "\\",Span (map pprintName ns)]
-    ,U.Pack [Prim "->",pprintExpr e]]
-pprintExpr (CrVar x)=Prim x
+
+pprintExpr :: CrExpr -> StrBlock
 pprintExpr (CrCase e as)=U.Pack $
-    [Line $ Span [Prim "case",pprintExpr e,Prim "of"]
+    [Line $ Span [Prim "case",pprintExprInline e,Prim "of"]
     ,Indent $ U.Pack $ map cv as]
     where
-        cv0 (v,e)=[Line $ Span [pprintName v,Prim "->",pprintExpr e]]
-        cv (con,vs,e)=Line $ Span [Span $ Prim con:map pprintName vs,Prim "->",pprintExpr e]
-pprintExpr (CrLet flag binds e)=Span $
+        cv (con,vs,e)=U.Pack [Line $ Span $ Prim con:map pprintName vs++[Prim "->"],Indent $ pprintExpr e]
+pprintExpr (CrLet flag binds e)=U.Pack $
+    [Line $ Prim $ if flag then "letrec" else "let"
+    ,Indent $ U.Pack $ map cv binds
+    ,Line $ Prim "in"
+    ,Indent $ pprintExpr e]
+    where cv (v,e)=Line $ Span [pprintName v,Prim "=",pprintExprInline e]
+pprintExpr x=Line $ pprintExprInline x
+
+
+pprintExprInline :: CrExpr -> StrBlock
+pprintExprInline (CrLm ns e)=U.Pack $
+    [U.Pack [Prim "\\",Span (map pprintName ns)]
+    ,U.Pack [Prim "->",pprintExpr e]]
+pprintExprInline (CrVar x)=Prim x
+pprintExprInline (CrCase e as)=Span $
+    [Span [Prim "case",pprintExpr e,Prim "of"],Span $ map cv as]
+    where
+        cv (con,vs,e)=Span [Span $ Prim con:map pprintName vs,Prim "->",pprintExprInline e,Prim ";"]
+pprintExprInline (CrLet flag binds e)=Span $
     [Span $ (Prim $ if flag then "letrec" else "let"):map cv binds
     ,Prim "in"
-    ,pprintExpr e]
+    ,pprintExprInline e]
     where cv (v,e)=U.Pack [pprintName v,Prim "=",pprintExpr e,Prim ";"]
-pprintExpr (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintExpr e0,pprintExpr e1],Prim ")"]
-pprintExpr (CrByte n)=Prim $ show n
+pprintExprInline (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintExprInline e0,pprintExprInline e1],Prim ")"]
+pprintExprInline (CrByte n)=Prim $ show n
 -- pprintExpr f (Cr
-pprintExpr e=error $ "pprintExpr:"++show e
+pprintExprInline e=error $ "pprintExprInline:"++show e
 
 
 
