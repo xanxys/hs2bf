@@ -217,7 +217,9 @@ desugarStmt s=[s]
 -- _dt must be 0 before and after dispatch
 -- r must be 0 after dispatch
 expandDispatch r []=error "expandDispatch: empty dispatch"
-expandDispatch r [(n,e)]=[Clear (Register r)]++e
+expandDispatch r [(n,e)]
+    |abs n<3   = [Val (Register r) $ negate n]++e
+    |otherwise = [Clear (Register r)]++e
 expandDispatch r ((n0,e0):cs)=
     [Val (Register "_dt") 1
     ,Val (Register r) (negate $ n0)

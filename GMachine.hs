@@ -54,7 +54,7 @@ compile m
         t=M.fromList $ ("main",2):zip (filter (/="main") $ M.keys m) [3..]
         
         -- code generation
-        lib=[stack1,heap1,heapNew,heapNew_,heapRef,stackNew,stackTop]
+        lib=[stack1,heap1,heapNew,heapNew_,heapTop,heapRef,stackNew,stackTop]
         prc=map (uncurry $ compileProc t) $ M.assocs m
         loop=[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE,exec $ M.assocs t]
         
@@ -65,10 +65,36 @@ compile m
         hs=["H0"]
 
 simplify :: M.Map String [GMCode] -> Process (M.Map String [GMCode])
-simplify=return . elimReduce
+simplify=return . M.map mergeSlide . elimReduce . removeLoneSC
 
--- inlining condition:
--- 
+removeLoneSC :: M.Map String [GMCode] -> M.Map String [GMCode]
+removeLoneSC m=M.filterWithKey (\k _->S.member k col) m
+    where col=rlscAux m S.empty (S.singleton "main")
+
+rlscAux :: M.Map String [GMCode] -> S.Set String -> S.Set String -> S.Set String
+rlscAux m col front
+    |S.null front = col
+    |otherwise    = rlscAux m col' (S.difference new col')
+    where
+        col'=S.union col front
+        new=S.unions $ map (S.unions . map collectDepSC . (m M.!)) $ S.toList front
+
+
+collectDepSC :: GMCode -> S.Set String
+collectDepSC (PushSC x)=S.singleton x
+collectDepSC (Case cs)=S.unions $ map (S.unions . map collectDepSC . snd) cs
+collectDepSC _=S.empty
+
+
+
+mergeSlide :: [GMCode] -> [GMCode]
+mergeSlide []=[]
+mergeSlide (Slide n:Slide m:xs)=mergeSlide $ Slide (n+m):xs
+mergeSlide (Case cs:xs)=Case (map (second mergeSlide) cs):mergeSlide xs
+mergeSlide (x:xs)=x:mergeSlide xs
+
+
+-- | Separate ['GMCode'] at 'Reduce'.
 elimReduce :: M.Map String [GMCode] -> M.Map String [GMCode]
 elimReduce=M.fromList . concatMap f . M.assocs
     where f (n,xs)=aux n [] xs
@@ -280,51 +306,14 @@ compileCode m (Case cs:is)=contWith m Origin is $
     ,Dispatch "tag" $ map (second $ flip (contWith m HeapA) []) cs
     ,Delete "tag"
     ]
-compileCode m (UError s:_)=
-    [Clear ptr
-    ,Val ptr 117
-    ,Output ptr -- u
-    ,Val ptr (-7)
-    ,Output ptr -- n
-    ,Val ptr (-10)
-    ,Output ptr -- d
-    ,Val ptr 1
-    ,Output ptr -- e
-    ,Val ptr 1
-    ,Output ptr -- f
-    ,Val ptr 3
-    ,Output ptr -- i
-    ,Val ptr 5
-    ,Output ptr -- n
-    ,Val ptr (-9)
-    ,Output ptr -- e
-    ,Val ptr (-1)
-    ,Output ptr -- d
-    ]
-    where ptr=Memory "S0" 0
+compileCode m (UError s:_)=Clear ptr:concatMap (\d->[Val ptr d,Output ptr]) ds
+    where
+        ds=head ns:zipWith (-) (tail ns) ns
+        ns=map ord s
+        ptr=Memory "S0" 0
 
 
-    
--- | Applicable for Pack, App
-st2heap ix=
-    [Inline "#heap1" []
-    ,Inline "#stackTop" []
-    ,SAM.Alloc "temp"
-    ,Move (Memory "S0" 0) [Register "temp"]
-    ,Locate (-1)
-    ,Inline "#stack1" []
-    ,Inline "#heapNew_" []
-    ,Move (Register "temp") [Memory "H0" $ negate $ 2+ix]
-    ,Delete "temp"
-    ]
 
--- | Use this right after 'st2heap' to push newly created pointer
-st2heapFin=
-    [Inline "#heap1" []
-    ,Inline "#stackNew" []
-    ,Move (Register "addr") [Memory "S0" 0]
-    ,Delete "addr"
-    ]
 
 
 appTag=0
@@ -568,6 +557,26 @@ heapNew_=SProc "#heapNew_" []
             ,Locate 1]
         ,Delete "cnt"
         ]
+    ]
+
+-- | Move to where the heap top. Must be aligned with frame.
+heapTop :: SProc
+heapTop=SProc "#heapTop" []
+    [While (Memory "H0" 0)
+        [SAM.Alloc "cnt"
+        ,Copy (Memory "H0" 0) [Register "cnt"]
+        ,While (Register "cnt")
+            [Val (Register "cnt") (-1)
+            ,Locate 1]
+        ,Delete "cnt"
+        ]
+    ,SAM.Alloc "cnt"
+    ,Copy (Memory "H0" (-1)) [Register "cnt"]
+    ,While (Register "cnt")
+        [Val (Register "cnt") (-1)
+        ,Locate (-1)
+        ]
+    ,Delete "cnt"
     ]
 
 -- | Move to the frame pointed by addr. addr will be 0. Must be aligned.

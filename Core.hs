@@ -63,7 +63,7 @@ convertDataCon t (name,xs)=
 
 
 
--- | Resolve "" in 'Case'
+-- | Resolve default clause in 'Case'
 simplify :: Core -> Process Core
 simplify (Core ds ps)=return $ Core ds $ map (smplP table) ps
     where
