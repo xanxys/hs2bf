@@ -89,6 +89,7 @@ collectDepSC _=S.empty
 
 mergeSlide :: [GMCode] -> [GMCode]
 mergeSlide []=[]
+mergeSlide (Slide 0:xs)=mergeSlide xs
 mergeSlide (Slide n:Slide m:xs)=mergeSlide $ Slide (n+m):xs
 mergeSlide (Case cs:xs)=Case (map (second mergeSlide) cs):mergeSlide xs
 mergeSlide (x:xs)=x:mergeSlide xs
@@ -124,6 +125,7 @@ compileProc m name cs=SProc ("!"++name) [] $ contWith m Origin cs []
 data MPos
     =HeapA
     |StackA
+    |StackT
     |Origin
     deriving(Show,Eq)
 
@@ -132,16 +134,16 @@ fPos (PushByte _)=HeapA
 fPos (PushSC _)=HeapA
 fPos MkApp=HeapA
 fPos (Pack _ _)=HeapA
-fPos Swap=StackA
+fPos Swap=StackT
 fPos (Push _)=StackA
-fPos (Slide _)=StackA
-fPos (PushArg _)=StackA
-fPos (Case _)=StackA
+fPos (Slide _)=StackT
+fPos (PushArg _)=StackT
+fPos (Case _)=StackT
 fPos (UnPack _)=StackA
 
 
 
--- requirement: HF*
+-- requirement: HeapA
 newFrame :: Int -> [Int] -> (Pointer -> [Stmt]) -> [Stmt]
 newFrame tag xs post=
     [Comment $ unwords ["nf",show tag,show xs]
@@ -167,18 +169,28 @@ contWith :: M.Map String Int -> MPos -> [GMCode] -> [Stmt] -> [Stmt]
 contWith m Origin [] ss=ss
 contWith m HeapA  [] ss=ss++[Inline "#heap1" []]
 contWith m StackA [] ss=ss++[Inline "#stack1" []]
+contWith m StackT [] ss=ss++[Inline "#stack1" []]
 contWith m prev xs@(x:_) ss=ss++transition prev (fPos x)++[Comment (show x)]++compileCode m xs
 
+-- TODO: come up with good abstraction
 transition :: MPos -> MPos -> [Stmt]
 transition x y
-    |x==Origin || x==y = []
-    |x==HeapA          = [Inline "#heap1" []]
-    |x==StackA         = [Inline "#stack1" []]
+    |x==y                   = []
+    |x==Origin && y==StackT = [Inline "#stackTop" []]
+    |x==Origin              = []
+    |x==StackA && y==StackT = [Inline "#stackTop" []]
+    |x==StackA && y==Origin = [Inline "#stack1" []]
+    |x==StackA && y==HeapA  = [Inline "#stack1" []]
+    |x==StackT && y==StackA = []
+    |x==StackT && y==Origin = [Inline "#stack1" []]
+    |x==StackT && y==HeapA  = [Inline "#stack1" []]
+    |x==HeapA  && y==StackT = [Inline "#heap1" [],Inline "#stackTop" []]
+    |x==HeapA               = [Inline "#heap1" []]
 
 -- | Compile a single 'GMCode' to a procedure. StackA|HeapA -> StackA|HeapA
 compileCode :: M.Map String Int -> [GMCode] -> [Stmt]
 compileCode m (PushByte x:is)= -- constTag x
-    contWith m StackA is $ newFrame constTag [x] $ \pa->
+    contWith m StackT is $ newFrame constTag [x] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1" []
@@ -187,7 +199,7 @@ compileCode m (PushByte x:is)= -- constTag x
     ,Delete "addr"
     ]
 compileCode m (PushSC k:is)= -- scTag sc
-    contWith m StackA is $ newFrame scTag [m M.! k] $ \pa->
+    contWith m StackT is $ newFrame scTag [m M.! k] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1" []
@@ -216,7 +228,7 @@ compileCode m (MkApp:is)= -- appTag ap0 ap1
     ,Delete "tr2"
     ]
 compileCode m (Pack t 0:is)=
-    contWith m StackA is $ newFrame structTag [t] $ \pa->
+    contWith m StackT is $ newFrame structTag [t] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1" []
@@ -239,7 +251,7 @@ compileCode m (Pack t n:is)= -- stTag t x1...xn
     ,Delete "addr"
     ]++
     concatMap (\n->let r="tr"++show n in [Move (Register r) [Memory "H0" $ n+2],Delete r]) [1..n]
-compileCode m (UnPack 0:is)=contWith m StackA is $
+compileCode m (UnPack 0:is)=contWith m StackT is $
     [Inline "#stackNew" []
     ,Clear (Memory "S0" (-1))
     ,Locate (-2)
@@ -260,29 +272,25 @@ compileCode m (UnPack n:is)=contWith m StackA is $ -- the last item becomes top
     ]++
     map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) (reverse [1..n])++
     map (Delete . ("tr"++) . show) [1..n]
-compileCode m (Swap:is)=contWith m StackA is $
-    [Inline "#stackTop" []
-    ,SAM.Alloc "temp"
+compileCode m (Swap:is)=contWith m StackT is $
+    [SAM.Alloc "temp"
     ,Move (Memory "S0" 0) [Register "temp"]
     ,Move (Memory "S0" (-1)) [Memory "S0" 0]
     ,Move (Register "temp") [Memory "S0" (-1)]
     ,Delete "temp"
     ]
-compileCode m (Push n:is)=contWith m StackA is $
+compileCode m (Push n:is)=contWith m StackT is $
     [Inline "#stackNew" []
     ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
     ]
-compileCode m (Slide 0:is)=contWith m StackA is []
-compileCode m (Slide n:is)=contWith m StackA is $
-    [Inline "#stackTop" []
-    ,Clear (Memory "S0" $ negate n)
+compileCode m (Slide n:is)=if n<=0 then error "Slide 0" else contWith m StackT is $
+    [Clear (Memory "S0" $ negate n)
     ,Move (Memory "S0" 0) [Memory "S0" $ negate n]
     ]++
     map (Clear . Memory "S0" . negate) [1..n-1]++
     [Locate $ negate n]
-compileCode m (PushArg n:is)=contWith m StackA is $
-    [Inline "#stackTop" []
-    ,SAM.Alloc "aaddr"
+compileCode m (PushArg n:is)=contWith m StackT is $
+    [SAM.Alloc "aaddr"
     ,Copy (Memory "S0" $ negate n) [Register "aaddr"]
     ,Inline "#stack1" []
     ,Inline "#heapRef" ["aaddr"]
@@ -295,8 +303,7 @@ compileCode m (PushArg n:is)=contWith m StackA is $
     ,Delete "arg"
     ]
 compileCode m (Case cs:is)=contWith m Origin is $
-    [Inline "#stackTop" []
-    ,SAM.Alloc "saddr"
+    [SAM.Alloc "saddr"
     ,Copy (Memory "S0" 0) [Register "saddr"]
     ,Inline "#stack1" []
     ,Inline "#heapRef" ["saddr"]
