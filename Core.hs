@@ -117,12 +117,18 @@ compileE mc mv (CrCstr t es)=
     concatS (zipWith (compileE mc) (map (shift mv) [0..]) (reverse es)) |> Pack t (length es)
 compileE mc mv (CrCase ec cs)=compileE mc mv ec |> Reduce RAny |> Case (map f cs)
     where
-        f (con,vs,e)=(M.findWithDefault (error $ "cE:not found:"++con) con mc,F.toList $ UnPack (length vs) <| compileE mc (insMV vs) e)
-        insMV vs=M.union (shift mv $ length vs) $ M.fromList $ zip vs (map Push [0..])
-            -- do you need reverse $ vs here?
+        f (con,vs,e)=(M.findWithDefault (error $ "cE:not found:"++con) con mc
+                     ,F.toList $
+                            (UnPack (length vs) <|
+                            compileE mc (insMV $ reverse vs) e) |>
+                            Slide (length vs)
+                     ) 
+        insMV vs=M.union (M.fromList $ zip vs (map Push [0..])) $ shift mv $ length vs
 compileE mc mv (CrLet False bs e)=
-    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map snd $ reverse bs)) >< compileE mc mv' e
-    where mv'=M.union (shift mv $ length bs) $ M.fromList $ zip (map fst bs) (map Push [0..])
+    concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map snd $ reverse bs)) ><
+    compileE mc mv' e ><
+    Q.fromList [Slide $ length bs]
+    where mv'=M.union (M.fromList $ zip (map fst bs) (map Push [0..])) $ shift mv $ length bs
 compileE mc mv (CrLet _ _ _)=error "compileE: letrec"
 compileE mc mv (CrLm _ _)=error "compileE: lambda"
 

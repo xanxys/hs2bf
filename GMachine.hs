@@ -82,8 +82,8 @@ aux n cs (Case as:xs)
     |null rs   = aux n (Case as:cs) xs
     |otherwise = (n,reverse $ Case as'':cs):rs
     where
-        as'=map (\(k,x)->(k,aux (n++"_d"++show k) [] x)) as
-        as''=map (second $ (++xs) . snd . head) as'
+        as'=map (\(k,x)->(k,aux (n++"_d"++show k) [] $ x++xs)) as
+        as''=map (second $ snd . head) as'
         rs=concatMap (tail . snd) as'
 aux ns cs (x:xs)=aux ns (x:cs) xs
 
@@ -188,7 +188,7 @@ compileCode m (UnPack 0:is)=contWith m StackA is $
     ,Clear (Memory "S0" (-1))
     ,Locate (-2)
     ]
-compileCode m (UnPack n:is)=contWith m StackA is $
+compileCode m (UnPack n:is)=contWith m StackA is $ -- the last item becomes top
     [Inline "#stackNew" []
     ,SAM.Alloc "saddr"
     ,Move (Memory "S0" (-1)) [Register "saddr"]
@@ -202,7 +202,7 @@ compileCode m (UnPack n:is)=contWith m StackA is $
     [Inline "#heap1" []
     ,Inline "#stackNew" []
     ]++
-    map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) [1..n]++
+    map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) (reverse [1..n])++
     map (Delete . ("tr"++) . show) [1..n]
 compileCode m (Swap:is)=contWith m StackA is $
     [Inline "#stackTop" []
@@ -216,6 +216,7 @@ compileCode m (Push n:is)=contWith m StackA is $
     [Inline "#stackNew" []
     ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
     ]
+compileCode m (Slide 0:is)=contWith m StackA is []
 compileCode m (Slide n:is)=contWith m StackA is $
     [Inline "#stackTop" []
     ,Clear (Memory "S0" $ negate n)
