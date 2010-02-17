@@ -41,7 +41,7 @@ import System.Directory
 import System.FilePath.Posix
 
 import Util
-import Core
+import Core hiding(multiApp)
 
 
 -- | Necessary information for translating module name to 'FilePath'.
@@ -152,6 +152,10 @@ convExp (HsApp e0 e1)=CrApp (convExp e0) (convExp e1)
 convExp e@(HsCase _ _)=convFullCase e
 convExp (HsLit (HsInt n))=error "convExp: int"-- CrA (h,Nothing) $ CrInt $ fromIntegral n
 convExp (HsLit (HsChar ch))=CrByte $ fromIntegral $ ord ch
+convExp (HsLet bs e)=CrLet True (map (toVP . convFunDecl) bs) (convExp e)
+    where
+        toVP (CrProc v [] e)=(v,e)
+        toVP (CrProc v as e)=(v,CrLm as e)
 -- convExp h (HsExpTyeSig
 convExp e=error $ "ERROR:convExp:"++show e
 

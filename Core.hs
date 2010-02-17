@@ -8,7 +8,7 @@
 --
 -- * type-inference
 --
--- * dependency-analysis
+-- * dependency-analysis(convert 
 --
 -- * MFE-detection
 --
@@ -17,6 +17,7 @@
 -- are done in Core language
 module Core where
 import Control.Arrow
+import Control.Monad.Writer
 import Data.Ord
 import Data.List
 import qualified Data.Map as M
@@ -34,8 +35,61 @@ type LocHint=String
 
 
 data Core=Core [CrData] [CrProc]
-data CrData=CrData CrName [CrName] [(CrName,[CrType])]
-data CrProc=CrProc CrName [CrName] CrExpr
+data CrData=CrData CrName [CrName] [(CrName,[CrType])] deriving(Show)
+data CrProc=CrProc CrName [CrName] CrExpr deriving(Show)
+
+
+
+
+
+-- | Rename all names to be unique.
+{-
+uniquify :: Core -> Core
+uniquify 
+
+uniquifyP :: S.Set CrName -> CrProc -> CrProc
+uniquifyP s (CrProc n args exp)=CrProc n args $ uniquifyE (S.fromList args) exp
+
+uniquifyE :: S.Set CrName -> CrExpr -> CrExpr
+uniquifyE s (CrApp e0 e1)=CrApp (uniquifyE s e0) (uniquifyE s e1)
+uniquifyE s (CrCase e cs)=CrCase 
+-}
+
+
+
+
+liftLambda :: CrProc -> [CrProc]
+liftLambda (CrProc n args e)=CrProc n args e':ps
+    where (e',ps)=runWriter (liftl ("_l_"++n) e)
+
+
+liftl :: String -> CrExpr -> Writer [CrProc] CrExpr
+liftl n (CrLm as e)=do
+    liftl (n++"_") e >>= post . CrProc n (fvs++as)
+    return $! multiApp (CrVar n) $ map CrVar fvs
+    where fvs=freeVar e
+liftl n (CrLet flag bs e)=liftM2 (CrLet flag) (mapM f bs) (liftl (n++"_") e)
+    where f (v,e)=liftM (\x->(v,x)) $ liftl (n++"_"++v) e
+liftl n (CrCase e cs)=liftM2 CrCase (liftl (n++"_") e) (mapM f cs)
+    where f (t,vs,e)=liftM (\x->(t,vs,x)) $ liftl (n++"_"++t) e
+liftl n (CrApp e0 e1)=liftM2 CrApp (liftl n e0) (liftl (n++"_") e1)
+liftl n (CrCstr tag es)=liftM (CrCstr tag) (zipWithM f es [0..])
+    where f e k=liftl (n++"_"++show k) e
+liftl n e=return e
+
+post :: a -> Writer [a] ()
+post=tell . (:[])
+
+freeVar :: CrExpr -> [CrName]
+freeVar e=[]
+
+
+
+multiApp :: CrExpr -> [CrExpr] -> CrExpr
+multiApp=foldl CrApp
+
+
+
 
 
 
@@ -128,9 +182,10 @@ compileE mc mv (CrLet False bs e)=
     concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map snd $ reverse bs)) ><
     compileE mc mv' e ><
     Q.fromList [Slide $ length bs]
-    where mv'=M.union (M.fromList $ zip (map fst bs) (map Push [0..])) $ shift mv $ length bs
+    where
+        mv'=M.union (M.fromList $ zip (map fst bs) (map Push [0..])) $ shift mv $ length bs
 compileE mc mv (CrLet _ _ _)=error "compileE: letrec"
-compileE mc mv (CrLm _ _)=error "compileE: lambda"
+compileE mc mv (CrLm _ _)=error "compileE: lambda must be lifted beforehand"
 
 concatS :: [Q.Seq a] -> Q.Seq a
 concatS=foldr (><) Q.empty
@@ -170,10 +225,9 @@ pprintExpr (CrCase e as)=U.Pack $
         cv (con,vs,e)=U.Pack [Line $ Span $ Prim con:map pprintName vs++[Prim "->"],Indent $ pprintExpr e]
 pprintExpr (CrLet flag binds e)=U.Pack $
     [Line $ Prim $ if flag then "letrec" else "let"
-    ,Indent $ U.Pack $ map cv binds
+    ,Indent $ U.Pack $ map (\(v,e)->Span [Prim v,Prim "=",pprintExprInline e]) binds
     ,Line $ Prim "in"
     ,Indent $ pprintExpr e]
-    where cv (v,e)=Line $ Span [pprintName v,Prim "=",pprintExprInline e]
 pprintExpr x=Line $ pprintExprInline x
 
 
@@ -190,7 +244,7 @@ pprintExprInline (CrLet flag binds e)=Span $
     [Span $ (Prim $ if flag then "letrec" else "let"):map cv binds
     ,Prim "in"
     ,pprintExprInline e]
-    where cv (v,e)=U.Pack [pprintName v,Prim "=",pprintExpr e,Prim ";"]
+    where cv (v,e)=U.Pack [Prim v,Prim "=",pprintExprInline e,Prim ";"]
 pprintExprInline (CrApp e0 e1)=U.Pack [Prim "(",Span [pprintExprInline e0,pprintExprInline e1],Prim ")"]
 pprintExprInline (CrByte n)=Prim $ show n
 -- pprintExpr f (Cr
