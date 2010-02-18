@@ -31,8 +31,6 @@ import Util as U hiding(Pack)
 import qualified Util as U
 import GMachine
 
-import Debug.Trace
-
 type LocHint=String
 
 

@@ -8,8 +8,8 @@ structTag=3
 
 
 library=
-    [stack1,stackNew,stackTop
-    ,heap1,heapNew,heapNew_,heapTop,heapRef
+    [stack1,stackNew,stackTop "S0",stackTop "Hp"
+    ,heap1 "Hp",heap1 "Hs",heapNew,heapNew_,heapTop,heapRef
     ,gc,gcTransfer,gcMark,gcCopy,gcIndex,gcRewrite
     ,rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE
     ]
@@ -36,7 +36,7 @@ setupMemory=SProc "%setupMemory" []
 
 mainLoop :: SProc
 mainLoop=SProc "%mainLoop" []
-    [SAM.Alloc "sc" -- 0:halt 1:cont-eval *:exec
+    [Alloc "sc" -- 0:halt 1:cont-eval *:exec
     ,Val (Register "sc") 1
     ,While (Register "sc")
         [Inline "%eval" ["sc"]
@@ -57,13 +57,13 @@ mainLoop=SProc "%mainLoop" []
 eval :: SProc
 eval=SProc "%eval" ["sc"]
     [Inline "#stack1" []
-    ,Inline "#stackTop" []
-    ,SAM.Alloc "addr"
+    ,Inline "#stackTopS0" []
+    ,Alloc "addr"
     ,Copy (Memory "S0" 0) [Register "addr"]
     ,Inline "#stack1" []
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"
-    ,SAM.Alloc "tag"
+    ,Alloc "tag"
     ,Copy (Memory "Hp" 2) [Register "tag"]
     ,Dispatch "tag"
         [(appTag,[Inline "%evalApp" []])
@@ -75,9 +75,9 @@ eval=SProc "%eval" ["sc"]
     ]
 
 evalApp=SProc "%evalApp" []
-    [SAM.Alloc "addr"
+    [Alloc "addr"
     ,Copy (Memory "Hp" 3) [Register "addr"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
@@ -87,19 +87,19 @@ evalApp=SProc "%evalApp" []
 evalSC=SProc "%evalSC" ["sc"]
     [Val (Register "sc") (-1)
     ,Copy (Memory "Hp" 3) [Register "sc"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ]
 
 
 evalStr=SProc "%evalStr" ["sc"]
-    [Inline "#heap1" []
-    ,Inline "#stackTop" []
-    ,SAM.Alloc "root"
+    [Inline "#heap1Hp" []
+    ,Inline "#stackTopS0" []
+    ,Alloc "root"
     ,Val (Register "root") 1
     ,While (Memory "S0" (-1)) -- non-root frame -> get sc
         [Val (Register "sc") (-1) -- sc:=0
         ,Val (Register "root") (-1)
-        ,SAM.Alloc "addr"
+        ,Alloc "addr"
         ,Move (Memory "S0" (-1)) [Register "addr"]
         ,Move (Memory "S0" 0) [Memory "S0" (-1)] -- move exp to top
         ,Locate (-1)
@@ -107,12 +107,12 @@ evalStr=SProc "%evalStr" ["sc"]
         ,Inline "#heapRef" ["addr"]
         ,Delete "addr"
         ,Copy (Memory "Hp" 3) [Register "sc"]
-        ,Inline "#heap1" []
+        ,Inline "#heap1Hp" []
         ]
     ,While (Register "root")
         [Val (Register "root") (-1)
-        ,Inline "#stackTop" []
-        ,SAM.Alloc "addr"
+        ,Inline "#stackTopS0" []
+        ,Alloc "addr"
         ,Copy (Memory "S0" 0) [Register "addr"]
         ,Inline "#stack1" []
         ,Inline "#heapRef" ["addr"]
@@ -124,14 +124,14 @@ evalStr=SProc "%evalStr" ["sc"]
 
 -- sc must be 1 on entry
 evalE=SProc "%evalE" ["sc"]
-    [SAM.Alloc "stag"
+    [Alloc "stag"
     ,Copy (Memory "Hp" 3) [Register "stag"]
     ,Dispatch "stag"
         [(0, -- input f
-            [SAM.Alloc "faddr"
+            [Alloc "faddr"
             ,Copy (Memory "Hp" 4) [Register "faddr"]
             -- construct app frame: [7,gcTag,appTag,f,aaddr+1,aaddr,7]
-            ,SAM.Alloc "aaddr"
+            ,Alloc "aaddr"
             ,Inline "#heapNew" ["aaddr"]
             ,Val (Memory "Hp" 0) 7
             ,Clear (Memory "Hp" 1),Val (Memory "Hp" 1) 0
@@ -156,26 +156,26 @@ evalE=SProc "%evalE" ["sc"]
             ,Input (Memory "Hp" 3)
             ,Clear (Memory "Hp" 6) -- mark new frame
             -- pop and push aaddr
-            ,Inline "#heap1" []
-            ,Inline "#stackTop" []
+            ,Inline "#heap1Hp" []
+            ,Inline "#stackTopS0" []
             ,Clear (Memory "S0" 0)
             ,Move (Register "aaddr") [Memory "S0" 0]
             ,Delete "aaddr"
             ,Inline "#stack1" []
             ])
         ,(1, -- output x k [8,gcTag,structTag,1,X,K,addr,8]
-            [SAM.Alloc "xaddr"
-            ,SAM.Alloc "kaddr"
+            [Alloc "xaddr"
+            ,Alloc "kaddr"
             ,Copy (Memory "Hp" 4) [Register "xaddr"]
             ,Copy (Memory "Hp" 5) [Register "kaddr"]
             -- refer and output x
-            ,Inline "#heap1" []
+            ,Inline "#heap1Hp" []
             ,Inline "#heapRef" ["xaddr"]
             ,Delete "xaddr"
             ,Output (Memory "Hp" 3)
             -- replace stack top
-            ,Inline "#heap1" []
-            ,Inline "#stackTop" []
+            ,Inline "#heap1Hp" []
+            ,Inline "#stackTopS0" []
             ,Clear (Memory "S0" 0)
             ,Move (Register "kaddr") [Memory "S0" 0]
             ,Delete "kaddr"
@@ -183,8 +183,8 @@ evalE=SProc "%evalE" ["sc"]
             ])
         ,(2, -- halt
             [Val (Register "sc") (-1) -- sc:=0
-            ,Inline "#heap1" []
-            ,Inline "#stackTop" []
+            ,Inline "#heap1Hp" []
+            ,Inline "#stackTopS0" []
             ,Clear (Memory "S0" 0)
             ])
         ]
@@ -194,7 +194,7 @@ evalE=SProc "%evalE" ["sc"]
 -- | Must be on address 1. /sc/ will be 1 or 0.
 exec :: [(String,Int)] -> SProc
 exec xs=SProc "%exec" ["sc"]
-    [SAM.Alloc "cont"
+    [Alloc "cont"
     ,While (Register "sc")
         [Dispatch "sc" $ (1,[]):map f xs
         ,Val (Register "cont") 1
@@ -210,11 +210,11 @@ exec xs=SProc "%exec" ["sc"]
 
 
 -- | Return to address 1. Must be aligned with a heap frame.
-heap1 :: SProc
-heap1=SProc "#heap1" []
-    [While (Memory "Hp" (-1))
-        [SAM.Alloc "cnt"
-        ,Copy (Memory "Hp" (-1)) [Register "cnt"]
+heap1 :: String -> SProc
+heap1 r=SProc ("#heap1"++r) []
+    [While (Memory r (-1))
+        [Alloc "cnt"
+        ,Copy (Memory r (-1)) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate (-1)
@@ -228,7 +228,7 @@ heap1=SProc "#heap1" []
 heapNew :: SProc
 heapNew=SProc "#heapNew" ["addr"]
     [While (Memory "Hp" 0)
-        [SAM.Alloc "cnt"
+        [Alloc "cnt"
         ,Copy (Memory "Hp" 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
@@ -244,7 +244,7 @@ heapNew=SProc "#heapNew" ["addr"]
 heapNew_ :: SProc
 heapNew_=SProc "#heapNew_" []
     [While (Memory "Hp" 0)
-        [SAM.Alloc "cnt"
+        [Alloc "cnt"
         ,Copy (Memory "Hp" 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
@@ -257,14 +257,14 @@ heapNew_=SProc "#heapNew_" []
 heapTop :: SProc
 heapTop=SProc "#heapTop" []
     [While (Memory "Hp" 0)
-        [SAM.Alloc "cnt"
+        [Alloc "cnt"
         ,Copy (Memory "Hp" 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1]
         ,Delete "cnt"
         ]
-    ,SAM.Alloc "cnt"
+    ,Alloc "cnt"
     ,Copy (Memory "Hp" (-1)) [Register "cnt"]
     ,While (Register "cnt")
         [Val (Register "cnt") (-1)
@@ -279,7 +279,7 @@ heapRef=SProc "#heapRef" ["addr"]
     [Val (Register "addr") (-1)
     ,While (Register "addr")
         [Val (Register "addr") (-1)
-        ,SAM.Alloc "cnt"
+        ,Alloc "cnt"
         ,Copy (Memory "Hp" 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
@@ -300,13 +300,14 @@ stackNew=SProc "#stackNew" []
     [While (Memory "S0" 0) [Locate 1]]
 
 -- | Move to stack top.
-stackTop :: SProc
-stackTop=SProc "#stackTop" []
-    [While (Memory "S0" 0) [Locate 1]
+stackTop :: String -> SProc
+stackTop r=SProc ("#stackTop"++r) []
+    [While (Memory r 0) [Locate 1]
     ,Locate (-1)
     ]
 
 
+-- | Origin -> Origin: Run packing GC.
 gc :: SProc
 gc=SProc "#gc" []
     [Inline "#gcTransfer" []
@@ -316,22 +317,57 @@ gc=SProc "#gc" []
     ,Inline "#gcRewrite" []
     ]
 
+-- | Copy everything as is from Hp to Hs.
 gcTransfer :: SProc
 gcTransfer=SProc "#gcTransfer" []
-    []
-
+    [While (Memory "Hp" 0)
+        [Alloc "cnt"
+        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,While (Register "cnt")
+            [Move (Memory "Hp" 0) [Memory "Hs" 0]
+            ,Val (Register "cnt") (-1)
+            ,Locate (-1)
+            ]
+        ,Delete "cnt"
+        ]
+    ,Inline "#heap1s" []
+    ]
+        
+-- | Mark nodes from S, using Hp as /frontier/ stack.
 gcMark :: SProc
 gcMark=SProc "#gcMark" []
-    []
+    [Comment "init frontiers"
+    ,While (Memory "S0" 0)
+        [Clear (Memory "Hp" 0)
+        ,Copy (Memory "S0" 0) [Memory "Hp" 0]
+        ]
+    ,Locate (-1)
+    ,Inline "#stack1" []
+    ,Comment "top to bottom"
+    ,While (Memory "Hp" 0)
+        [Inline "#stackTopHp" []
+        ,Alloc "addr"
+        ,Move (Memory "Hp" 0) [Register "addr"]
+        ,Locate (-1)
+        ,While (Memory "Hp" 0)
+            [Inline "#stack1Hp" []
+--            ,Inline "#" [] -- what about Cstr? Its size is variable!
+            ]
+        ,Delete "addr"
+        ]
+    ]
 
+-- | Copy marked frames from Hs to Hp.
 gcCopy :: SProc
 gcCopy=SProc "#gcCopy" []
     []
 
+-- | Construct inverted table of address in Hs from Hp.
 gcIndex :: SProc
 gcIndex=SProc "#gcIndex" []
     []
 
+-- | Rewrite stack and Hp addressed based on the table in Hs.
 gcRewrite :: SProc
 gcRewrite=SProc "#gcRewrite" []
     []

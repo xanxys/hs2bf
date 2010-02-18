@@ -170,7 +170,7 @@ newFrame tag xs post=
 -- | Compile 'GMCode's from given 'MPos' to 'Stmt's, followed by 'Origin' returning code.
 contWith :: M.Map String Int -> MPos -> [GMCode] -> [Stmt] -> [Stmt]
 contWith m Origin [] ss=ss
-contWith m HeapA  [] ss=ss++[Inline "#heap1" []]
+contWith m HeapA  [] ss=ss++[Inline "#heap1Hp" []]
 contWith m StackA [] ss=ss++[Inline "#stack1" []]
 contWith m StackT [] ss=ss++[Inline "#stack1" []]
 contWith m prev xs@(x:_) ss=ss++transition prev (fPos x)++[Comment (show x)]++compileCode m xs
@@ -179,16 +179,16 @@ contWith m prev xs@(x:_) ss=ss++transition prev (fPos x)++[Comment (show x)]++co
 transition :: MPos -> MPos -> [Stmt]
 transition x y
     |x==y                   = []
-    |x==Origin && y==StackT = [Inline "#stackTop" []]
+    |x==Origin && y==StackT = [Inline "#stackTopS0" []]
     |x==Origin              = []
-    |x==StackA && y==StackT = [Inline "#stackTop" []]
+    |x==StackA && y==StackT = [Inline "#stackTopS0" []]
     |x==StackA && y==Origin = [Inline "#stack1" []]
     |x==StackA && y==HeapA  = [Inline "#stack1" []]
     |x==StackT && y==StackA = []
     |x==StackT && y==Origin = [Inline "#stack1" []]
     |x==StackT && y==HeapA  = [Inline "#stack1" []]
-    |x==HeapA  && y==StackT = [Inline "#heap1" [],Inline "#stackTop" []]
-    |x==HeapA               = [Inline "#heap1" []]
+    |x==HeapA  && y==StackT = [Inline "#heap1Hp" [],Inline "#stackTopS0" []]
+    |x==HeapA               = [Inline "#heap1Hp" []]
 
 -- | Compile a single 'GMCode' to a procedure. StackA|HeapA -> StackA|HeapA
 compileCode :: M.Map String Int -> [GMCode] -> [Stmt]
@@ -196,7 +196,7 @@ compileCode m (PushByte x:is)= -- constTag x
     contWith m StackT is $ newFrame constTag [x] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
@@ -205,7 +205,7 @@ compileCode m (PushSC k:is)= -- scTag sc
     contWith m StackT is $ newFrame scTag [m M.! k] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
@@ -214,7 +214,7 @@ compileCode m (MkApp:is)= -- appTag ap0 ap1
     contWith m HeapA is $ newFrame appTag [0,0] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ,SAM.Alloc "tr1"
     ,Move (Memory "S0" (-1)) [Register "tr1"]
@@ -234,7 +234,7 @@ compileCode m (Pack t 0:is)=
     contWith m StackT is $ newFrame structTag [t] $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
@@ -243,7 +243,7 @@ compileCode m (Pack t n:is)= -- stTag t x1...xn
     contWith m HeapA is $ newFrame structTag (t:replicate n 0) $ \pa->
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ]++
     concatMap (\n->let r="tr"++show n in [SAM.Alloc r,Move (Memory "S0" $ negate n) [Register r]]) [1..n]++
@@ -270,7 +270,7 @@ compileCode m (UnPack n:is)=contWith m StackA is $ -- the last item becomes top
     ]++
     map (SAM.Alloc . ("tr"++) . show) [1..n]++
     map (\x->Copy (Memory "Hp" $ 3+x) [Register $ "tr"++show x]) [1..n]++
-    [Inline "#heap1" []
+    [Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ]++
     map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) (reverse [1..n])++
@@ -300,7 +300,7 @@ compileCode m (PushArg n:is)=contWith m StackT is $
     ,Delete "aaddr"
     ,SAM.Alloc "arg"
     ,Copy (Memory "Hp" 4) [Register "arg"]
-    ,Inline "#heap1" []
+    ,Inline "#heap1Hp" []
     ,Inline "#stackNew" []
     ,Move (Register "arg") [Memory "S0" 0]
     ,Delete "arg"
@@ -334,7 +334,7 @@ compileCode m (UError s:_)=Clear ptr:concatMap (\d->[Val ptr d,Output ptr]) ds
 -- Note2: 'PushArg' counts from top=0
 data GMCode
     =Slide Int -- ^ pop 1st...nth items
-    |Update Int -- ^ \[n\]:=Ind &\[0\] and pop 1
+    |Update Int -- ^ replace all reference to the nth address to 0th address.
     |Pop Int -- ^ remove n items
     |MkApp -- ^ function must be pushed after arguments. then use this.
     |Push Int
@@ -344,7 +344,7 @@ data GMCode
     |Pack Int Int
     |Case [(Int,[GMCode])]
     |UnPack Int
---    |Alloc Int
+    |Alloc Int
     |Reduce RHint -- ^ reduce stack top to WHNF
     |Swap -- ^ used for implementing 'elimReduce'
     |UError String -- ^ output the given string with undefined consequence
