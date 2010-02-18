@@ -4,11 +4,12 @@
 --    Fully-kind-annotated -> throw away kind
 -- * type-inference -> possible type error
 --    Fully-type-annotated
--- * throw away LocHint
 --
 -- * type-inference
 --
--- * dependency-analysis(convert 
+-- * uniquify
+--
+-- * dependency-analysis(convert letrec to let)
 --
 -- * MFE-detection
 --
@@ -30,6 +31,7 @@ import Util as U hiding(Pack)
 import qualified Util as U
 import GMachine
 
+import Debug.Trace
 
 type LocHint=String
 
@@ -42,18 +44,50 @@ data CrProc=CrProc CrName [CrName] CrExpr deriving(Show)
 
 
 
--- | Rename all names to be unique.
-{-
+-- | Rename all variables to be unique in each 'CrProc'.
 uniquify :: Core -> Core
-uniquify 
+uniquify (Core ds ps)=Core ds $ map (uniquifyP m0 r0) ps
+    where
+        r0=""
+        m0=M.fromList $ zip gs gs
+        gs=concatMap (\(CrData _ _ cons)->map fst cons) ds++map (\(CrProc n _ _)->n) ps
 
-uniquifyP :: S.Set CrName -> CrProc -> CrProc
-uniquifyP s (CrProc n args exp)=CrProc n args $ uniquifyE (S.fromList args) exp
+uniquifyP :: M.Map CrName CrName -> String -> CrProc -> CrProc
+uniquifyP m r (CrProc n as e)=CrProc n (map (m' M.!) as) $ uniquifyE m' r e
+    where m'=bind r m as
 
-uniquifyE :: S.Set CrName -> CrExpr -> CrExpr
-uniquifyE s (CrApp e0 e1)=CrApp (uniquifyE s e0) (uniquifyE s e1)
-uniquifyE s (CrCase e cs)=CrCase 
--}
+uniquifyE :: M.Map CrName CrName -> String -> CrExpr -> CrExpr
+uniquifyE m r (CrVar v)=CrVar $ m M.! v
+uniquifyE m r (CrApp e0 e1)=CrApp (uniquifyE m n1 e0) (uniquifyE m n2 e1)
+    where [n1,n2]=branch 2 r
+uniquifyE m r (CrCstr t es)=CrCstr t $ zipWith (uniquifyE m) ns es
+    where ns=branch (length es) r
+uniquifyE m r (CrCase e cs)=CrCase (uniquifyE m n e) (zipWith f cs ns)
+    where
+        n:ns=branch (length cs+1) r
+        f (tag,vs,e) n=let m'=bind r m vs in (tag,map (m' M.!) vs,uniquifyE m' n e)
+uniquifyE m r (CrLet flag bs e)=CrLet flag (zipWith f bs ns) (uniquifyE m' n e)
+    where
+        m'=bind r m $ map fst bs
+        n:ns=branch (length bs+1) r
+        f (v,e) n=(m' M.! v,uniquifyE (if flag then m' else m) n e)
+uniquifyE m r (CrLm vs e)=CrLm (map (m' M.!) vs) $ uniquifyE m' r e
+    where m'=bind r m vs
+uniquifyE m r e@(CrByte _)=e
+
+branch :: Int -> String -> [String]
+branch n r=map ((r++) . (:[])) ss
+    where ss=take n $ iterate succ 'a'
+
+bind :: String -> M.Map CrName CrName -> [CrName] -> M.Map CrName CrName
+bind r m vs=M.union (M.fromList $ zip vs vs') m
+    where vs'=map ((++r) . (++"_")) vs
+
+
+        
+
+
+
 
 
 
@@ -67,7 +101,7 @@ liftl :: String -> CrExpr -> Writer [CrProc] CrExpr
 liftl n (CrLm as e)=do
     liftl (n++"_") e >>= post . CrProc n (fvs++as)
     return $! multiApp (CrVar n) $ map CrVar fvs
-    where fvs=freeVar e
+    where fvs=S.toList $ freeVar e
 liftl n (CrLet flag bs e)=liftM2 (CrLet flag) (mapM f bs) (liftl (n++"_") e)
     where f (v,e)=liftM (\x->(v,x)) $ liftl (n++"_"++v) e
 liftl n (CrCase e cs)=liftM2 CrCase (liftl (n++"_") e) (mapM f cs)
@@ -80,8 +114,12 @@ liftl n e=return e
 post :: a -> Writer [a] ()
 post=tell . (:[])
 
-freeVar :: CrExpr -> [CrName]
-freeVar e=[]
+
+freeVar :: CrExpr -> S.Set CrName
+freeVar (CrVar x)=S.singleton x
+freeVar (CrApp e0 e1)=S.union (freeVar e0) (freeVar e1)
+freeVar (CrLet flag bs e)=undefined
+
 
 
 
@@ -117,9 +155,9 @@ convertDataCon t (name,xs)=
 
 
 
--- | Resolve default clause in 'Case'
+-- | Resolve default clause in 'Case' and 'uniquify'.
 simplify :: Core -> Process Core
-simplify (Core ds ps)=return $ Core ds $ map (smplP table) ps
+simplify (Core ds ps)=return $ uniquify $ Core ds $ map (smplP table) ps
     where
         table=M.fromList $ concatMap (mkP . map snd) $ groupBy (equaling fst) $ concatMap conCT ds
         mkP xs=map (\x->(fst x,S.fromList xs)) xs
