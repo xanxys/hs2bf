@@ -77,7 +77,7 @@ compile m
         hs=["Hp","Hs"]
 
 simplify :: M.Map String [GMCode] -> Process (M.Map String [GMCode])
-simplify=return . M.map mergeSlide . elimReduce . removeLoneSC
+simplify=return . M.map elimBase . elimReduce . removeLoneSC
 
 removeLoneSC :: M.Map String [GMCode] -> M.Map String [GMCode]
 removeLoneSC m=M.filterWithKey (\k _->S.member k col) m
@@ -98,13 +98,22 @@ collectDepSC (Case cs)=S.unions $ map (S.unions . map collectDepSC . snd) cs
 collectDepSC _=S.empty
 
 
-
-mergeSlide :: [GMCode] -> [GMCode]
-mergeSlide []=[]
-mergeSlide (Slide 0:xs)=mergeSlide xs
-mergeSlide (Slide n:Slide m:xs)=mergeSlide $ Slide (n+m):xs
-mergeSlide (Case cs:xs)=Case (map (second mergeSlide) cs):mergeSlide xs
-mergeSlide (x:xs)=x:mergeSlide xs
+-- | Optmize away /base/ cases like following.
+--
+-- * Case with 1 clause
+--
+-- * Pop 0
+--
+-- * Slide 0 (in fact, successive 'Slide's form a 'Monoid')
+elimBase :: [GMCode] -> [GMCode]
+elimBase []=[]
+elimBase (Slide 0:xs)=elimBase xs
+elimBase (Slide n:Slide m:xs)=elimBase $ Slide (n+m):xs
+elimBase (Case cs:xs)
+    |length cs<=1 = elimBase $ (snd $ head cs)++xs
+    |otherwise    = Case (map (second elimBase) cs):elimBase xs
+elimBase (Pop 0:xs)=elimBase xs
+elimBase (x:xs)=x:elimBase xs
 
 
 -- | Separate ['GMCode'] at 'Reduce'.
