@@ -7,12 +7,15 @@ constTag=2
 structTag=3
 
 
-library=
-    [stack1 "S0",stackNew,stackTop "S0",stackTop "Hp"
-    ,heap1 "Hp",heap1 "Hs",heapNew,heapNew_,heapTop,heapRef
-    ,gc,gcTransfer,gcMark,gcCopy,gcIndex,gcRewrite
-    ,rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE
-    ,isEqual,rewrite "S0",rewrite "Hp"
+genLibrary :: [Int] -> [SProc]
+genLibrary ns=concat
+    [genStackLib "S0" -- primary address stack
+    ,genStackLib "Hp" -- frontier stack in GC
+    ,genHeapLib "Hp" -- primiary heap
+    ,genHeapLib "Hs" -- secondary heap for GC
+    ,[gc,gcTransfer,gcMark ns,gcCopy,gcIndex,gcRewrite]
+    ,[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE]
+    ,[isEqual,rewrite "S0",rewrite "Hp"]
     ]
 
 rootProc :: SProc
@@ -62,7 +65,7 @@ eval=SProc "%eval" ["sc"]
     ,Alloc "addr"
     ,Copy (Memory "S0" 0) [Register "addr"]
     ,Inline "#stack1S0" []
-    ,Inline "#heapRef" ["addr"]
+    ,Inline "#heapRefHp" ["addr"]
     ,Delete "addr"
     ,Alloc "tag"
     ,Copy (Memory "Hp" 2) [Register "tag"]
@@ -79,7 +82,7 @@ evalApp=SProc "%evalApp" []
     [Alloc "addr"
     ,Copy (Memory "Hp" 3) [Register "addr"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
     ,Inline "#stack1S0" []
@@ -105,7 +108,7 @@ evalStr=SProc "%evalStr" ["sc"]
         ,Move (Memory "S0" 0) [Memory "S0" (-1)] -- move exp to top
         ,Locate (-1)
         ,Inline "#stack1S0" []
-        ,Inline "#heapRef" ["addr"]
+        ,Inline "#heapRefHp" ["addr"]
         ,Delete "addr"
         ,Copy (Memory "Hp" 3) [Register "sc"]
         ,Inline "#heap1Hp" []
@@ -116,7 +119,7 @@ evalStr=SProc "%evalStr" ["sc"]
         ,Alloc "addr"
         ,Copy (Memory "S0" 0) [Register "addr"]
         ,Inline "#stack1S0" []
-        ,Inline "#heapRef" ["addr"]
+        ,Inline "#heapRefHp" ["addr"]
         ,Delete "addr"
         ,Inline "%evalE" ["sc"]
         ]
@@ -133,7 +136,7 @@ evalE=SProc "%evalE" ["sc"]
             ,Copy (Memory "Hp" 4) [Register "faddr"]
             -- construct app frame: [7,gcTag,appTag,f,aaddr+1,aaddr,7]
             ,Alloc "aaddr"
-            ,Inline "#heapNew" ["aaddr"]
+            ,Inline "#heapNewHp" ["aaddr"]
             ,Val (Memory "Hp" 0) 7
             ,Clear (Memory "Hp" 1),Val (Memory "Hp" 1) 0
             ,Clear (Memory "Hp" 2),Val (Memory "Hp" 2) appTag
@@ -171,7 +174,7 @@ evalE=SProc "%evalE" ["sc"]
             ,Copy (Memory "Hp" 5) [Register "kaddr"]
             -- refer and output x
             ,Inline "#heap1Hp" []
-            ,Inline "#heapRef" ["xaddr"]
+            ,Inline "#heapRefHp" ["xaddr"]
             ,Delete "xaddr"
             ,Output (Memory "Hp" 3)
             -- replace stack top
@@ -210,6 +213,9 @@ exec xs=SProc "%exec" ["sc"]
 
 
 
+genHeapLib :: String -> [SProc]
+genHeapLib r=map ($r) [heap1,heapNew,heapNew_,heapTop,heapRef]
+
 -- | Return to address 1. Must be aligned with a heap frame.
 heap1 :: String -> SProc
 heap1 r=SProc ("#heap1"++r) []
@@ -226,27 +232,27 @@ heap1 r=SProc ("#heap1"++r) []
 
 -- | Move to where a new heap frame would be and write the address to addr. Must be aligned with frame.
 -- The first size field is 0, but others are undefined.
-heapNew :: SProc
-heapNew=SProc "#heapNew" ["addr"]
-    [While (Memory "Hp" 0)
+heapNew :: String -> SProc
+heapNew r=SProc ("#heapNew"++r) ["addr"]
+    [While (Memory r 0)
         [Alloc "cnt"
-        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,Copy (Memory r 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1]
         ,Delete "cnt"
         ]
-    ,Copy (Memory "Hp" (-2)) [Register "addr"]
+    ,Copy (Memory r (-2)) [Register "addr"]
     ,Val (Register "addr") 1
     ]
 
 -- | Move to where a new heap frame would be. Must be aligned with frame.
 -- The first size field is 0, but others are undefined.
-heapNew_ :: SProc
-heapNew_=SProc "#heapNew_" []
-    [While (Memory "Hp" 0)
+heapNew_ :: String -> SProc
+heapNew_ r=SProc ("#heapNew_"++r) []
+    [While (Memory r 0)
         [Alloc "cnt"
-        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,Copy (Memory r 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1]
@@ -255,18 +261,18 @@ heapNew_=SProc "#heapNew_" []
     ]
 
 -- | Move to where the heap top. Must be aligned with frame.
-heapTop :: SProc
-heapTop=SProc "#heapTop" []
-    [While (Memory "Hp" 0)
+heapTop :: String -> SProc
+heapTop r=SProc ("#heapTop"++r) []
+    [While (Memory r 0)
         [Alloc "cnt"
-        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,Copy (Memory r 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1]
         ,Delete "cnt"
         ]
     ,Alloc "cnt"
-    ,Copy (Memory "Hp" (-1)) [Register "cnt"]
+    ,Copy (Memory r (-1)) [Register "cnt"]
     ,While (Register "cnt")
         [Val (Register "cnt") (-1)
         ,Locate (-1)
@@ -275,13 +281,13 @@ heapTop=SProc "#heapTop" []
     ]
 
 -- | Move to the frame pointed by addr. addr will be 0. Must be aligned.
-heapRef :: SProc
-heapRef=SProc "#heapRef" ["addr"]
+heapRef :: String -> SProc
+heapRef r=SProc ("#heapRef"++r) ["addr"]
     [Val (Register "addr") (-1)
     ,While (Register "addr")
         [Val (Register "addr") (-1)
         ,Alloc "cnt"
-        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,Copy (Memory r 0) [Register "cnt"]
         ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1
@@ -290,15 +296,18 @@ heapRef=SProc "#heapRef" ["addr"]
         ]
     ]
 
+-- | Generate all stack utiltiy functions for given region.
+genStackLib r=map ($r) [stack1,stackNew,stackTop]
+
 -- | Return to address 1. Must be on stack($S\/=0).
 stack1 :: String -> SProc
 stack1 r=SProc ("#stack1"++r) []
     [While (Memory r 0) [Locate (-1)],Locate 1]
 
 -- | Move to stack new.
-stackNew :: SProc
-stackNew=SProc "#stackNew" []
-    [While (Memory "S0" 0) [Locate 1]]
+stackNew :: String -> SProc
+stackNew r=SProc ("#stackNew"++r) []
+    [While (Memory r 0) [Locate 1]]
 
 -- | Move to stack top.
 stackTop :: String -> SProc
@@ -334,9 +343,9 @@ gcTransfer=SProc "#gcTransfer" []
     ,Inline "#heap1s" []
     ]
         
--- | Mark nodes from S, using Hp as /frontier/ stack.
-gcMark :: SProc
-gcMark=SProc "#gcMark" []
+-- | Mark nodes from S, using Hp as /frontier/ stack. Argument is cons arity.
+gcMark :: [Int] -> SProc
+gcMark ns=SProc "#gcMark" []
     [Comment "init frontiers"
     ,While (Memory "S0" 0)
         [Clear (Memory "Hp" 0)
@@ -345,18 +354,74 @@ gcMark=SProc "#gcMark" []
     ,Locate (-1)
     ,Inline "#stack1S0" []
     ,Comment "top to bottom"
+    ,Inline "#stackTopHp" []
     ,While (Memory "Hp" 0)
-        [Inline "#stackTopHp" []
-        ,Alloc "addr"
+        [Alloc "addr"
         ,Move (Memory "Hp" 0) [Register "addr"]
         ,Locate (-1)
-        ,While (Memory "Hp" 0)
-            [Inline "#stack1Hp" []
---            ,Inline "#" [] -- what about Cstr? Its size is variable!
-            ]
+        ,Inline "#stack1Hp" []
+        ,Inline "#heapRefHs" ["addr"]
         ,Delete "addr"
+        ,Comment "flag:=1-gc; gc:=0"
+        ,Alloc "flag"
+        ,Val (Register "flag") 1
+        ,While (Memory "Hs" 1)
+            [Val (Memory "Hs" 1) (-1)
+            ,Val (Register "flag") (-1)
+            ]
+        ,Val (Memory "Hs" 1) 1
+        ,While (Register "flag")
+            [Val (Register "flag") (-1)
+            ,Alloc "ntag"
+            ,Copy (Memory "Hs" 2) [Register "ntag"]
+            ,Dispatch "ntag" $
+                [(appTag,
+                    [Alloc "t1"
+                    ,Copy (Memory "Hs" 3) [Register "t1"]
+                    ,Alloc "t2"
+                    ,Copy (Memory "Hs" 4) [Register "t2"]
+                    ,Inline "#heap1Hs" []
+                    ,Inline "#stackNewHp" []
+                    ,Move (Register "t1") [Memory "Hp" 0]
+                    ,Delete "t1"
+                    ,Move (Register "t2") [Memory "Hp" 1]
+                    ,Delete "t2"
+                    ,Clear (Memory "Hp" 2)
+                    ,Locate 1
+                    ])
+                ,(scTag,
+                    [Inline "#heap1Hs" []
+                    ,While (Memory "Hp" 0) [Inline "#stackTopHp" []]
+                    ])
+                ,(constTag,
+                    [Inline "#heap1Hs" []
+                    ,While (Memory "Hp" 0) [Inline "#stackTopHp" []]
+                    ])
+                ]++
+                if null ns then [] else
+                [(structTag,
+                    [Alloc "sz"
+                    ,Copy (Memory "Hs" 0) [Register "sz"]
+                    ,Dispatch "sz" $ map f ns
+                    ,Delete "sz"
+                    ])
+                ]
+            ,Delete "ntag"
+            ]
+        ,Delete "flag"
         ]
     ]
+    where
+        f n=(n+6,
+            concatMap (\x->[Alloc $ "t"++show x,Copy (Memory "Hs" $ x+3) [Register $ "t"++show x]]) [1..n]++
+            [Inline "#heap1Hs" []
+            ,Inline "#stackNewHp" []
+            ]++
+            concatMap (\x->[Move (Register $ "t"++show x) [Memory "Hp" $ x-1],Delete $ "t"++show x]) [1..n]++
+            [Clear (Memory "Hp" n),Locate $ n-1]
+            )
+
+
 
 -- | Copy marked frames from Hs to Hp.
 gcCopy :: SProc

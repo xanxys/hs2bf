@@ -60,14 +60,22 @@ compile m
         t=M.fromList $ ("main",2):zip (filter (/="main") $ M.keys m) [3..]
         
         -- code generation
+        library=genLibrary $ S.toList $ S.unions $ map (S.unions . map collectConArity) $ M.elems m
         procs=map (uncurry $ compileProc t) $ M.assocs m
         dispatcher=[exec $ M.assocs t]
-        
+                
         -- layout configuration
         codeSpace=ceiling $ log (fromIntegral $ M.size m+2)/log 256
         heapSpace=1
         ss=map (("S"++) . show) [0..heapSpace-1]
         hs=["Hp","Hs"]
+
+collectConArity :: GMCode -> S.Set Int
+collectConArity (Pack _ n)=S.singleton n
+collectConArity (Case cs)=S.unions $ map (S.unions . map collectConArity . snd) cs
+collectConArity _=S.empty
+
+
 
 simplify :: M.Map String [GMCode] -> Process (M.Map String [GMCode])
 simplify=return . M.map elimBase . elimReduce . removeLoneSC
@@ -165,7 +173,7 @@ newFrame :: Int -> [Int] -> (Pointer -> [Stmt]) -> [Stmt]
 newFrame tag xs post=
     [Comment $ unwords ["nf",show tag,show xs]
     ,SAM.Alloc "addr"
-    ,Inline "#heapNew" ["addr"]
+    ,Inline "#heapNewHp" ["addr"]
     ,Clear (Memory "Hp" $ size-2)
     ,Move (Register "addr") [Memory "Hp" $ size-2]
     ,Delete "addr"
@@ -212,7 +220,7 @@ compileCode m (PushByte x:is)= -- constTag x
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
     ]
@@ -221,7 +229,7 @@ compileCode m (PushSC k:is)= -- scTag sc
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
     ]
@@ -230,7 +238,7 @@ compileCode m (MkApp:is)= -- appTag ap0 ap1
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ,SAM.Alloc "tr1"
     ,Move (Memory "S0" (-1)) [Register "tr1"]
     ,SAM.Alloc "tr2"
@@ -238,7 +246,7 @@ compileCode m (MkApp:is)= -- appTag ap0 ap1
     ,Copy (Register "addr") [Memory "S0" (-2)]
     ,Locate (-2)
     ,Inline "#stack1S0" []
-    ,Inline "#heapRef" ["addr"]
+    ,Inline "#heapRefHp" ["addr"]
     ,Delete "addr"
     ,Move (Register "tr1") [Memory "Hp" 3]
     ,Delete "tr1"
@@ -250,7 +258,7 @@ compileCode m (Pack t 0:is)=
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ,Move (Register "addr") [Memory "S0" 0]
     ,Delete "addr"
     ]
@@ -259,34 +267,34 @@ compileCode m (Pack t n:is)= -- stTag t x1...xn
     [SAM.Alloc "addr"
     ,Copy pa [Register "addr"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ]++
     concatMap (\n->let r="tr"++show n in [SAM.Alloc r,Move (Memory "S0" $ negate n) [Register r]]) [1..n]++
     [Copy (Register "addr") [Memory "S0" $ negate n]
     ,Locate $ negate n
     ,Inline "#stack1S0" []
-    ,Inline "#heapRef" ["addr"]
+    ,Inline "#heapRefHp" ["addr"]
     ,Delete "addr"
     ]++
     concatMap (\n->let r="tr"++show n in [Move (Register r) [Memory "Hp" $ n+3],Delete r]) [1..n]
 compileCode m (UnPack 0:is)=contWith m StackT is $
-    [Inline "#stackNew" []
+    [Inline "#stackNewS0" []
     ,Clear (Memory "S0" (-1))
     ,Locate (-2)
     ]
 compileCode m (UnPack n:is)=contWith m StackA is $ -- the last item becomes top
-    [Inline "#stackNew" []
+    [Inline "#stackNewS0" []
     ,SAM.Alloc "saddr"
     ,Move (Memory "S0" (-1)) [Register "saddr"]
     ,Locate (-2)
     ,Inline "#stack1S0" []
-    ,Inline "#heapRef" ["saddr"]
+    ,Inline "#heapRefHp" ["saddr"]
     ,Delete "saddr"
     ]++
     map (SAM.Alloc . ("tr"++) . show) [1..n]++
     map (\x->Copy (Memory "Hp" $ 3+x) [Register $ "tr"++show x]) [1..n]++
     [Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ]++
     map (\x->Move (Register $ "tr"++show x) [Memory "S0" $ x-1]) (reverse [1..n])++
     map (Delete . ("tr"++) . show) [1..n]
@@ -298,7 +306,7 @@ compileCode m (Swap:is)=contWith m StackT is $
     ,Delete "temp"
     ]
 compileCode m (Push n:is)=contWith m StackT is $
-    [Inline "#stackNew" []
+    [Inline "#stackNewS0" []
     ,Copy (Memory "S0" $ negate $ n+1) [Memory "S0" 0]
     ]
 compileCode m (Slide n:is)=if n<=0 then error "Slide 0" else contWith m StackT is $
@@ -311,12 +319,12 @@ compileCode m (PushArg n:is)=contWith m StackT is $
     [SAM.Alloc "aaddr"
     ,Copy (Memory "S0" $ negate n) [Register "aaddr"]
     ,Inline "#stack1S0" []
-    ,Inline "#heapRef" ["aaddr"]
+    ,Inline "#heapRefHp" ["aaddr"]
     ,Delete "aaddr"
     ,SAM.Alloc "arg"
     ,Copy (Memory "Hp" 4) [Register "arg"]
     ,Inline "#heap1Hp" []
-    ,Inline "#stackNew" []
+    ,Inline "#stackNewS0" []
     ,Move (Register "arg") [Memory "S0" 0]
     ,Delete "arg"
     ]
@@ -324,7 +332,7 @@ compileCode m (Case cs:is)=contWith m Origin is $
     [SAM.Alloc "saddr"
     ,Copy (Memory "S0" 0) [Register "saddr"]
     ,Inline "#stack1S0" []
-    ,Inline "#heapRef" ["saddr"]
+    ,Inline "#heapRefHp" ["saddr"]
     ,Delete "saddr"
     ,SAM.Alloc "tag"
     ,Copy (Memory "Hp" 3) [Register "tag"]
