@@ -321,7 +321,7 @@ pprintStmt s=Line $ Span $ case s of
 
 
 
--- | Flatten procedures with given root.
+-- | Flatten procedures from given root.
 flatten :: ProcName -> SAM -> SAM
 flatten root (SAM rs ps)
     |not $ null cycles = error $ "flatten: dependency cycles:\n"++unlines (map unwords cycles)
@@ -330,7 +330,7 @@ flatten root (SAM rs ps)
         (cycles,vs)=partitionEithers $ map f $ stronglyConnComp $ map procNode ps
         f (AcyclicSCC x)=Right x
         f (CyclicSCC xs)=Left xs
-    
+
         ps2m=M.fromList . map (\(SProc name args ss)->(name,(args,ss)))
         m2p r m=uncurry (SProc r) $ m M.! r
 

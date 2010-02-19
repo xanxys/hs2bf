@@ -41,6 +41,16 @@ data GFCompileFlag=GFCompileFlag
 -- 
 -- * 1 B: size of this frame 
 --
+-- Heap frame of size k with n-byte address:
+--
+-- * 1 B: size of this frame
+--
+-- * k B: payload
+--
+-- * n B: id of this frame
+-- 
+-- * 1 B: size of this frame 
+--
 -- Fields other than payload is always non-zero.
 --
 --
@@ -142,7 +152,9 @@ fPos (Slide _)=StackT
 fPos (PushArg _)=StackT
 fPos (Case _)=StackT
 fPos (UnPack _)=StackA
-
+fPos (Update _)=StackT
+fPos (Pop _)=StackT
+fPos x=error $ show x
 
 
 -- requirement: HeapA
@@ -171,8 +183,8 @@ newFrame tag xs post=
 contWith :: M.Map String Int -> MPos -> [GMCode] -> [Stmt] -> [Stmt]
 contWith m Origin [] ss=ss
 contWith m HeapA  [] ss=ss++[Inline "#heap1Hp" []]
-contWith m StackA [] ss=ss++[Inline "#stack1" []]
-contWith m StackT [] ss=ss++[Inline "#stack1" []]
+contWith m StackA [] ss=ss++[Inline "#stack1S0" []]
+contWith m StackT [] ss=ss++[Inline "#stack1S0" []]
 contWith m prev xs@(x:_) ss=ss++transition prev (fPos x)++[Comment (show x)]++compileCode m xs
 
 -- TODO: come up with good abstraction
@@ -182,11 +194,11 @@ transition x y
     |x==Origin && y==StackT = [Inline "#stackTopS0" []]
     |x==Origin              = []
     |x==StackA && y==StackT = [Inline "#stackTopS0" []]
-    |x==StackA && y==Origin = [Inline "#stack1" []]
-    |x==StackA && y==HeapA  = [Inline "#stack1" []]
+    |x==StackA && y==Origin = [Inline "#stack1S0" []]
+    |x==StackA && y==HeapA  = [Inline "#stack1S0" []]
     |x==StackT && y==StackA = []
-    |x==StackT && y==Origin = [Inline "#stack1" []]
-    |x==StackT && y==HeapA  = [Inline "#stack1" []]
+    |x==StackT && y==Origin = [Inline "#stack1S0" []]
+    |x==StackT && y==HeapA  = [Inline "#stack1S0" []]
     |x==HeapA  && y==StackT = [Inline "#heap1Hp" [],Inline "#stackTopS0" []]
     |x==HeapA               = [Inline "#heap1Hp" []]
 
@@ -222,7 +234,7 @@ compileCode m (MkApp:is)= -- appTag ap0 ap1
     ,Move (Memory "S0" (-2)) [Register "tr2"]
     ,Copy (Register "addr") [Memory "S0" (-2)]
     ,Locate (-2)
-    ,Inline "#stack1" []
+    ,Inline "#stack1S0" []
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"
     ,Move (Register "tr1") [Memory "Hp" 3]
@@ -249,7 +261,7 @@ compileCode m (Pack t n:is)= -- stTag t x1...xn
     concatMap (\n->let r="tr"++show n in [SAM.Alloc r,Move (Memory "S0" $ negate n) [Register r]]) [1..n]++
     [Copy (Register "addr") [Memory "S0" $ negate n]
     ,Locate $ negate n
-    ,Inline "#stack1" []
+    ,Inline "#stack1S0" []
     ,Inline "#heapRef" ["addr"]
     ,Delete "addr"
     ]++
@@ -264,7 +276,7 @@ compileCode m (UnPack n:is)=contWith m StackA is $ -- the last item becomes top
     ,SAM.Alloc "saddr"
     ,Move (Memory "S0" (-1)) [Register "saddr"]
     ,Locate (-2)
-    ,Inline "#stack1" []
+    ,Inline "#stack1S0" []
     ,Inline "#heapRef" ["saddr"]
     ,Delete "saddr"
     ]++
@@ -295,7 +307,7 @@ compileCode m (Slide n:is)=if n<=0 then error "Slide 0" else contWith m StackT i
 compileCode m (PushArg n:is)=contWith m StackT is $
     [SAM.Alloc "aaddr"
     ,Copy (Memory "S0" $ negate n) [Register "aaddr"]
-    ,Inline "#stack1" []
+    ,Inline "#stack1S0" []
     ,Inline "#heapRef" ["aaddr"]
     ,Delete "aaddr"
     ,SAM.Alloc "arg"
@@ -308,7 +320,7 @@ compileCode m (PushArg n:is)=contWith m StackT is $
 compileCode m (Case cs:is)=contWith m Origin is $
     [SAM.Alloc "saddr"
     ,Copy (Memory "S0" 0) [Register "saddr"]
-    ,Inline "#stack1" []
+    ,Inline "#stack1S0" []
     ,Inline "#heapRef" ["saddr"]
     ,Delete "saddr"
     ,SAM.Alloc "tag"
@@ -316,6 +328,58 @@ compileCode m (Case cs:is)=contWith m Origin is $
     ,Dispatch "tag" $ map (second $ flip (contWith m HeapA) []) cs
     ,Delete "tag"
     ]
+compileCode m (Update n:is)=contWith m HeapA is $
+    [SAM.Alloc "to"
+    ,Move (Memory "S0" 0) [Register "to"]
+    ,Locate (-1)
+    ,SAM.Alloc "from"
+    ,Copy (Memory "S0" $ 1-n) [Register "from"]
+    ,Inline "#stack1S0" []
+    -- rewrite stack
+    ,While (Memory "S0" 0)
+        [Inline "#rewriteS0" ["from","to"]
+        ,Locate 1
+        ]
+    ,Locate (-1)
+    ,Inline "#stack1S0" []
+    -- rewrite heap
+    ,While (Memory "Hp" 0)
+        [SAM.Alloc "ntag"
+        ,Copy (Memory "Hp" 2) [Register "ntag"]
+        ,Dispatch "ntag"
+            [(appTag,
+                [Locate 3
+                ,Inline "#rewriteHp" ["from","to"]
+                ,Locate 1
+                ,Inline "#rewriteHp" ["from","to"]
+                ,Locate 3
+                ])
+            ,(scTag,
+                [Locate 6])
+            ,(constTag,
+                [Locate 6])
+            ,(structTag,
+                [SAM.Alloc "size"
+                ,Copy (Memory "Hp" 0) [Register "size"]
+                ,Val (Register "size") (-6)
+                ,Locate 4
+                ,While (Register "size")
+                    [Inline "#rewriteHp" ["from","to"]
+                    ,Locate 1
+                    ,Val (Register "size") (-1)
+                    ]
+                ,Delete "size"
+                ,Locate 2
+                ])
+            ]
+        ,Delete "ntag"
+        ]
+    ,Delete "from"
+    ,Delete "to"
+    ]
+compileCode m (Pop n:is)=contWith m StackT is $
+    concat $ replicate n [Clear (Memory "S0" 0),Locate (-1)]
+
 compileCode m (UError s:_)=Clear ptr:concatMap (\d->[Val ptr d,Output ptr]) ds
     where
         ds=head ns:zipWith (-) (tail ns) ns
@@ -381,7 +445,6 @@ type GMST m a=StateT GMInternal m a
 data GMInternal=GMInternal{stack::Stack,heap::Heap} deriving(Show)
 data GMNode
     =App Address Address
-    |Ref Address
     |Const Int
     |Struct Int [Address]
     |Combinator String
@@ -466,6 +529,18 @@ evalGM fl fs (UnPack n:xs)=do
     mapM_ push cs
     evalGM fl fs xs
 evalGM fl fs (Swap:xs)=popn 2 >>= mapM_ push >> evalGM fl fs xs
+evalGM fl fs (Pop n:xs)=popn n >> evalGM fl fs xs
+evalGM fl fs (Update n:xs)=do
+    t<-pop
+    f<-refStack $ n-1
+    modify $ \(GMInternal st hp)->GMInternal (map (fS f t) st) (M.map (fH f t) hp)
+    evalGM fl fs xs
+    where
+        fS f t x|x==f      = t
+                |otherwise = x
+        fH f t (App x y)=App (fS f t x) (fS f t y)
+        fH f t (Struct tag xs)=Struct tag $ map (fS f t) xs
+        fH _ _ x=x
 evalGM _ _ x=error $ "evalGM: unsupported: "++show x
 
 
@@ -488,7 +563,6 @@ gc (GMInternal st hp)=GMInternal st hp'
 collect heap addr=S.insert addr $
     case heap M.! addr of
         App a0 a1 -> S.union (collect heap a0) (collect heap a1)
-        Ref a -> collect heap a
         Struct _ as -> S.unions $ map (collect heap) as
         _ -> S.empty
 
@@ -497,11 +571,7 @@ refHeap0 :: Monad m => Address -> GMST m GMNode
 refHeap0 addr=liftM ((M.!addr) . heap) get
 
 refHeap :: Monad m => Address -> GMST m GMNode
-refHeap addr=do
-    n<-refHeap0 addr
-    case n of
-        Ref addr' -> refHeap addr'
-        _ -> return n
+refHeap addr=refHeap0 addr
 
 refStack :: Monad m => Int -> GMST m Address
 refStack n=liftM ((!!n) . stack) get

@@ -141,6 +141,31 @@ multiApp=foldl CrApp
 
 
 
+optimize (Core ds ps)=Core ds (map (\(CrProc n as e)->CrProc n as $ optLetVar e) ps)
+
+-- | If rhs of let binder is a variable, remove it from let.
+optLetVar (CrLet False bs e)
+    |null bsN  = e'
+    |otherwise = CrLet False bsN e'
+    where
+        e'=optLetVar $ replaceVar t e
+        t=M.fromList $ map (second $ \(CrVar x)->x) bsS
+        isVar (CrVar _)=True
+        isVar _=False
+        (bsS,bsN)=partition (isVar . snd) bs
+optLetVar (CrLet True bs e)=CrLet True bs $ optLetVar e
+optLetVar (CrApp e0 e1)=CrApp (optLetVar e0) (optLetVar e1)
+optLetVar (CrCase e cs)=CrCase (optLetVar e) (map (\(tag,vs,e)->(tag,vs,optLetVar e)) cs)
+optLetVar e=e
+
+
+replaceVar :: M.Map CrName CrName -> CrExpr -> CrExpr
+replaceVar t (CrVar x)=CrVar $ M.findWithDefault x x t
+replaceVar t (CrApp e0 e1)=CrApp (replaceVar t e0) (replaceVar t e1)
+replaceVar t (CrCase e cs)=CrCase (replaceVar t e) (map (\(tag,vs,e)->(tag,vs,replaceVar t e)) cs)
+replaceVar t (CrLet f bs e)=CrLet f (map (second $ replaceVar t) bs) $ replaceVar t e
+replaceVar t e=e
+
 
 
 
@@ -169,7 +194,7 @@ convertDataCon t (name,xs)=
 
 -- | Resolve default clause in 'Case' and 'uniquify'.
 simplify :: Core -> Process Core
-simplify (Core ds ps)=return $ liftLambdaW $ uniquify $ Core ds $ map (smplP table) ps
+simplify (Core ds ps)=return $ liftLambdaW $ optimize $ uniquify $ Core ds $ map (smplP table) ps
     where
         table=M.fromList $ concatMap (mkP . map snd) $ groupBy (equaling fst) $ concatMap conCT ds
         mkP xs=map (\x->(fst x,S.fromList xs)) xs
@@ -208,7 +233,7 @@ smplE t x=x
 --
 compileP :: M.Map String Int -> CrProc -> (String,[GMCode])
 compileP mc (CrProc name args expr)=
-    (name,F.toList $ compileE mc mv expr><Q.fromList [Slide $ n+1])
+    (name,F.toList $ compileE mc mv expr><Q.fromList [Update $ n+1,Pop n])
     where
         n=length args
         mv=M.fromList $ zip args (map PushArg [1..])
@@ -226,7 +251,7 @@ compileE mc mv (CrCase ec cs)=compileE mc mv ec |> Reduce RAny |> Case (map f cs
                             (UnPack (length vs) <|
                             compileE mc (insMV $ reverse vs) e) |>
                             Slide (length vs)
-                     ) 
+                     )
         insMV vs=M.union (M.fromList $ zip vs (map Push [0..])) $ shift mv $ length vs
 compileE mc mv (CrLet False bs e)=
     concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map snd $ reverse bs)) ><
