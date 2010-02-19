@@ -1,3 +1,4 @@
 
-main=(\x y z->Output x z) 'A' Halt
+main=(\x y->Output ch x) Halt main
+    where ch='A'
 

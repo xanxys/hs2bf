@@ -20,6 +20,7 @@ module Core where
 import Control.Arrow
 import Control.Monad.Writer
 import Data.Ord
+import Data.Char
 import Data.List
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -87,7 +88,8 @@ bind r m vs=M.union (M.fromList $ zip vs vs') m
 
 
 
-
+liftLambdaW :: Core -> Core
+liftLambdaW (Core ds ps)=Core ds $ concatMap liftLambda ps
 
 
 liftLambda :: CrProc -> [CrProc]
@@ -96,10 +98,10 @@ liftLambda (CrProc n args e)=CrProc n args e':ps
 
 
 liftl :: String -> CrExpr -> Writer [CrProc] CrExpr
-liftl n (CrLm as e)=do
+liftl n e0@(CrLm as e)=do
     liftl (n++"_") e >>= post . CrProc n (fvs++as)
     return $! multiApp (CrVar n) $ map CrVar fvs
-    where fvs=S.toList $ freeVar e
+    where fvs=S.toList $ S.filter (not . isUpper . head) $ freeVar e0
 liftl n (CrLet flag bs e)=liftM2 (CrLet flag) (mapM f bs) (liftl (n++"_") e)
     where f (v,e)=liftM (\x->(v,x)) $ liftl (n++"_"++v) e
 liftl n (CrCase e cs)=liftM2 CrCase (liftl (n++"_") e) (mapM f cs)
@@ -114,9 +116,21 @@ post=tell . (:[])
 
 
 freeVar :: CrExpr -> S.Set CrName
-freeVar (CrVar x)=S.singleton x
-freeVar (CrApp e0 e1)=S.union (freeVar e0) (freeVar e1)
-freeVar (CrLet flag bs e)=undefined
+freeVar e=collectV e `S.difference` collectB e
+
+collectB :: CrExpr -> S.Set CrName
+collectB (CrApp e0 e1)=collectB e0 `S.union` collectB e1
+collectB (CrLet _ bs e)=S.fromList (map fst bs) `S.union` (S.unions $ map collectB $ e:map snd bs)
+collectB (CrCase e cs)=S.fromList (concatMap snd3 cs) `S.union` (S.unions $ map collectB $ e:map thr3 cs)
+collectB (CrLm as e)=S.fromList as `S.union` collectB e
+collectB _=S.empty
+
+collectV :: CrExpr -> S.Set CrName
+collectV (CrVar x)=S.singleton x
+collectV (CrApp e0 e1)=collectV e0 `S.union` collectV e1
+collectV (CrLet _ bs e)=S.unions $ map collectV $ e:map snd bs
+collectV (CrCase e cs)=S.unions $ map collectV $ e:map thr3 cs
+collectV (CrLm as e)=collectV e
 
 
 
@@ -155,7 +169,7 @@ convertDataCon t (name,xs)=
 
 -- | Resolve default clause in 'Case' and 'uniquify'.
 simplify :: Core -> Process Core
-simplify (Core ds ps)=return $ uniquify $ Core ds $ map (smplP table) ps
+simplify (Core ds ps)=return $ liftLambdaW $ uniquify $ Core ds $ map (smplP table) ps
     where
         table=M.fromList $ concatMap (mkP . map snd) $ groupBy (equaling fst) $ concatMap conCT ds
         mkP xs=map (\x->(fst x,S.fromList xs)) xs
