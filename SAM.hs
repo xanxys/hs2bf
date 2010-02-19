@@ -278,41 +278,43 @@ type RegName=String
 
 
 pprint :: SAM -> String
-pprint (SAM rs ps)=compileSB $ Pack [Line $ Line pre,procs]
-    where
-        pre=Span $ map Prim rs
-        procs=Pack $ map pprintSP ps
+pprint (SAM rs ps)=compileSB $ Group
+    [Line $ Span $ map Prim rs
+    ,EmptyLine
+    ,EmptyLine
+    ,Group $ intersperse EmptyLine $ map pprintSP ps
+    ]
 
-pprintSP :: SProc -> StrBlock
-pprintSP (SProc name args st)=Line $ Pack [def,Indent $ Pack $ map pprintStmt st]
+pprintSP :: SProc -> SBlock
+pprintSP (SProc name args st)=Group
+    [Line $ Span [Prim "pr",Pack $ Prim name:darg]
+    ,Indent $ Group $ map pprintStmt st
+    ]
     where
-        def=Line $ Span [Prim "pr",Pack $ Prim name:darg]
         darg|null args = []
             |otherwise = [Prim "/",Span $ map Prim args]
 
-pprintStmt :: Stmt -> StrBlock
-pprintStmt (Dispatch n cs)=Pack [t,Indent b]
-    where
-        t=Line $ Span [Prim "dispatch",Prim n]
-        b=Pack $ map pprintCase $ map (first show) cs
-pprintStmt (While ptr ss)=Pack [t,Indent b]
-    where
-        t=Line $ Span [Prim "while",Prim $ show ptr]
-        b=Pack $ map pprintStmt ss
-pprintStmt (Val p n)=Line $ Span [Prim "val",Prim $ show p,Prim $ show n]
-pprintStmt (Alloc n)=Line $ Span [Prim "alloc",Prim n]
-pprintStmt (Delete n)=Line $ Span [Prim "delete",Prim n]
-pprintStmt (Move d ss)=Line $ Span $ Prim "move":map (Prim . show) (d:ss)
-pprintStmt (Copy d ss)=Line $ Span $ Prim "copy":map (Prim . show) (d:ss)
-pprintStmt (Locate n)=Line $ Span [Prim "locate",Prim $ show n]
-pprintStmt (Inline n rs)=Line $ Span $ map Prim ("inline":n:rs)
-pprintStmt (Clear r)=Line $ Span [Prim "clear",Prim $ show r]
-pprintStmt (Input p)=Line $ Span [Prim "in",Prim $ show p]
-pprintStmt (Output p)=Line $ Span [Prim "out",Prim $ show p]
-pprintStmt (Comment s)=Line $ Span [Prim "--",Prim s]
-
-pprintCase :: (String,[Stmt]) -> StrBlock
-pprintCase (l,ss)=Pack [Line $ Prim l,Indent $ Pack $ map pprintStmt ss]
+pprintStmt :: Stmt -> SBlock
+pprintStmt (While ptr ss)=Group $
+    [Line $ Span [Prim "while",Prim $ show ptr]
+    ,Indent $ Group $ map pprintStmt ss]
+pprintStmt (Dispatch n cs)=Group $
+    [Line $ Span [Prim "dispatch",Prim n]
+    ,Indent $ Group $ map (f . first show) cs
+    ]
+    where f (l,ss)=Group [Line $ Prim l,Indent $ Group $ map pprintStmt ss]
+pprintStmt s=Line $ Span $ case s of
+    Val p n     -> [Prim "val",Prim $ show p,Prim $ show n]
+    Alloc n     -> [Prim "alloc",Prim n]
+    Delete n    -> [Prim "delete",Prim n]
+    Move d ss   -> Prim "move":map (Prim . show) (d:ss)
+    Copy d ss   -> Prim "copy":map (Prim . show) (d:ss)
+    Locate n    -> [Prim "locate",Prim $ show n]
+    Inline n rs -> map Prim ("inline":n:rs)
+    Clear r     -> [Prim "clear",Prim $ show r]
+    Input p     -> [Prim "in",Prim $ show p]
+    Output p    -> [Prim "out",Prim $ show p]
+    Comment s   -> [Prim "--",Prim s]
 
 
 

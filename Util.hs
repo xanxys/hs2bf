@@ -72,27 +72,33 @@ runNMR=second snd . flip runState ([],[])
 
 
 
--- | Nested string with indent for general pretty printing
-data StrBlock
+data SBlock
+    =EmptyLine
+    |Line IBlock
+    |Group [SBlock]
+    |Indent SBlock
+
+-- | Inline string
+data IBlock
     =Prim String
-    |Pack [StrBlock]
-    |Span [StrBlock]
-    |Line StrBlock
-    |Indent StrBlock
+    |Pack [IBlock]
+    |Span [IBlock]
 
--- | Render 'StrBlock'
-compileSB :: StrBlock -> String
-compileSB=caux 0
+-- | Render 'SBlock'
+compileSB :: SBlock -> String
+compileSB=unlines . saux 0
 
-caux :: Int -> StrBlock -> String
-caux n (Prim x)=x
-caux n (Pack ss)=concatMap (caux n) ss
-caux n (Span ss)=concatMap (caux n) $ intersperse (Prim " ") ss
-caux n (Line b)=replicate (4*n) ' '++caux n b++"\n"
-caux n (Indent b)=caux (n+1) b
+saux :: Int -> SBlock -> [String]
+saux _ EmptyLine=[""]
+saux n (Line i)=[replicate (n*4) ' '++compileIB i]
+saux n (Group xs)=concatMap (saux n) xs
+saux n (Indent x)=saux (n+1) x
 
-
-
+-- | Render 'IBlock'
+compileIB :: IBlock -> String
+compileIB (Prim x)=x
+compileIB (Pack xs)=concatMap compileIB xs
+compileIB (Span xs)=concatMap compileIB $ intersperse (Prim " ") xs
 
 
 -- | Moderately fast memory suitable for use in interpreters.

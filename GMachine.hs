@@ -357,19 +357,20 @@ data RHint
     deriving(Show)
 
 pprint :: M.Map String [GMCode] -> String
-pprint=compileSB . U.Pack . map (uncurry pprintGMF) . M.assocs
+pprint=compileSB . Group . intersperse EmptyLine . map (uncurry pprintGMF) . M.assocs
 
-pprintGMF :: String -> [GMCode] -> StrBlock
-pprintGMF name cs=Line $ U.Pack [Line $ U.Pack [Prim name,Prim ":"],pprintGMCs cs]
+pprintGMF :: String -> [GMCode] -> SBlock
+pprintGMF name cs=Group
+    [Line $ U.Pack [Prim name,Prim ":"]
+    ,Indent $ Group $ map pprintGMC cs
+    ]
 
-pprintGMCs :: [GMCode] -> StrBlock
-pprintGMCs=Indent . U.Pack . map pprintGMC
-
-pprintGMC :: GMCode -> StrBlock
-pprintGMC (Case cs)=U.Pack [Line $ Prim "Case",Indent $ U.Pack $ map f as]
-    where
-        as=map (first show) (sortBy (comparing fst) cs)
-        f (label,x)=U.Pack [Line $ Prim $ label++"->",pprintGMCs x]
+pprintGMC :: GMCode -> SBlock
+pprintGMC (Case cs)=Group
+    [Line $ Prim "Case"
+    ,Indent $ Group $ map (f . first show) $ sortBy (comparing fst) cs
+    ]
+    where f (label,xs)=Group [Line $ Span [Prim label,Prim "->"],Indent $ Group $ map pprintGMC xs]
 pprintGMC c=Line $ Prim $ show c
 
 
