@@ -43,15 +43,8 @@ data GFCompileFlag=GFCompileFlag
 --
 -- Heap frame of size k with n-byte address:
 --
--- * 1 B: size of this frame
---
--- * k B: payload
---
--- * n B: id of this frame
--- 
--- * 1 B: size of this frame 
---
--- Fields other than payload is always non-zero.
+-- Is it a good idea to remove GC tag, and attach it only when GC is running?
+--   (PRO:normally faster,CON:slower gcTransfer)
 --
 --
 -- Heap payload:
@@ -163,6 +156,7 @@ fPos (Case _)=StackT
 fPos (UnPack _)=StackA
 fPos (Update _)=StackT
 fPos (Pop _)=StackT
+fPos (GMachine.Alloc _)=fPos $ PushByte 0
 fPos x=error $ show x
 
 
@@ -388,6 +382,7 @@ compileCode m (Update n:is)=contWith m HeapA is $
     ]
 compileCode m (Pop n:is)=contWith m StackT is $
     concat $ replicate n [Clear (Memory "S0" 0),Locate (-1)]
+compileCode m (GMachine.Alloc n:is)=compileCode m $ replicate n (PushByte 0)++is
 
 compileCode m (UError s:_)=Clear ptr:concatMap (\d->[Val ptr d,Output ptr]) ds
     where
@@ -550,6 +545,7 @@ evalGM fl fs (Update n:xs)=do
         fH f t (App x y)=App (fS f t x) (fS f t y)
         fH f t (Struct tag xs)=Struct tag $ map (fS f t) xs
         fH _ _ x=x
+evalGM fl fs (GMachine.Alloc n:xs)=evalGM fl fs $ replicate n (PushByte 0)++xs
 evalGM _ _ x=error $ "evalGM: unsupported: "++show x
 
 

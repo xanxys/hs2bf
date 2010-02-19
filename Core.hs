@@ -256,10 +256,18 @@ compileE mc mv (CrCase ec cs)=compileE mc mv ec |> Reduce RAny |> Case (map f cs
 compileE mc mv (CrLet False bs e)=
     concatS (zipWith (compileE mc) (map (shift mv) [0..]) (map snd $ reverse bs)) ><
     compileE mc mv' e ><
-    Q.fromList [Slide $ length bs]
+    Q.fromList [Slide n]
     where
-        mv'=M.union (M.fromList $ zip (map fst bs) (map Push [0..])) $ shift mv $ length bs
-compileE mc mv (CrLet _ _ _)=error "compileE: letrec"
+        n=length bs
+        mv'=M.union (M.fromList $ zip (map fst bs) (map Push [0..])) $ shift mv n
+compileE mc mv (CrLet True bs e)=
+    Q.fromList [Alloc n] ><
+    concatS (map (compileE mc mv' . snd) $ reverse bs) ><
+    compileE mc mv' e ><
+    Q.fromList [Slide n]
+    where
+        n=length bs
+        mv'=M.union (M.fromList $ zip (map fst bs) (map Push [0..])) $ shift mv n
 compileE mc mv (CrLm _ _)=error "compileE: lambda must be lifted beforehand"
 
 concatS :: [Q.Seq a] -> Q.Seq a
