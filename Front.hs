@@ -466,12 +466,12 @@ instance WeakDesugar HsPat where
 instance WeakDesugar HsAlt where
     wds (HsAlt loc pat al decls)=HsAlt loc (wds pat) (wds al) (map wds decls)
 
--- | Only HsUnGuardedAlt remains.
+-- | Only HsUnGuardedAlt will remain.
 instance WeakDesugar HsGuardedAlts where
     wds (HsUnGuardedAlt e)=HsUnGuardedAlt $ wds e
     wds (HsGuardedAlts als)=HsUnGuardedAlt $ wds $ unguardG (\(HsGuardedAlt _ c e)->(c,e)) als
 
--- | Only HsUnGuardedRhs remains.
+-- | Only HsUnGuardedRhs will remain.
 instance WeakDesugar HsRhs where
     wds (HsUnGuardedRhs e)=HsUnGuardedRhs $ wds e
     wds (HsGuardedRhss rs)=HsUnGuardedRhs $ wds $ unguardG (\(HsGuardedRhs _ c e)->(c,e)) rs

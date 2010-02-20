@@ -13,7 +13,7 @@ genLibrary ns=concat
     ,genStackLib "Hp" -- frontier stack in GC
     ,genHeapLib "Hp" -- primiary heap
     ,genHeapLib "Hs" -- secondary heap for GC
-    ,[gc,gcTransfer,gcMark ns,gcCopy,gcIndex,gcRewrite]
+    ,[gc,gcTransfer,gcMark ns,gcCopy,gcIndex,gcRewrite ns,resolve]
     ,[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE]
     ,[isEqual,rewrite "S0",rewrite "Hp"]
     ]
@@ -506,9 +506,75 @@ gcIndex=SProc "#gcIndex" []
     ]
 
 -- | Rewrite stack and Hp addressed based on the table in Hs.
-gcRewrite :: SProc
-gcRewrite=SProc "#gcRewrite" []
-    []
+gcRewrite :: [Int] -> SProc
+gcRewrite ns=SProc "#gcRewrite" []
+    [While (Memory "Hp" 0)
+        [Alloc "ntag"
+        ,Copy (Memory "Hp" 2) [Register "ntag"]
+        ,Dispatch "ntag"
+            [(appTag,
+                [Alloc "t1"
+                ,Move (Memory "Hp" 3) [Register "t1"]
+                ,Alloc "t2"
+                ,Move (Memory "Hp" 4) [Register "t2"]
+                ,Alloc "ad"
+                ,Copy (Memory "Hp" 5) [Register "ad"]
+                ,Inline "#heap1Hp" []
+                ,Inline "#resolve" ["t1"]
+                ,Inline "#resolve" ["t2"]
+                ,Inline "#heapRefHp" ["ad"]
+                ,Delete "ad"
+                ,Move (Register "t1") [Memory "Hp" 3]
+                ,Delete "t1"
+                ,Move (Register "t2") [Memory "Hp" 4]
+                ,Delete "t2"
+                ,Locate 7
+                ])
+            ,(scTag,[Locate 6])
+            ,(constTag,[Locate 6])
+            ,(structTag,
+                [Alloc "stag"
+                ,Copy (Memory "Hp" 3) [Register "stag"]
+                ,Dispatch "stag" $ map f ns
+                ,Delete "stag"
+                ])
+            ]
+        ,Delete "ntag"
+        ]
+    ,Inline "#heap1Hp" []
+    ]
+    where
+        f n=(n+6,
+            concatMap (\x->[Alloc $ "t"++show x,Move (Memory "Hp" $ 3+x) [Register $ "t"++show x]]) [1..n]++
+            [Alloc "ad"
+            ,Copy (Memory "Hp" $ 4+n) [Register "ad"]
+            ,Inline "#heap1Hp" []
+            ]++
+            map (\x->Inline "#resolve" ["t"++show x]) [1..n]++
+            [Inline "#heapRefHp" ["ad"]
+            ,Delete "ad"
+            ]++
+            concatMap (\x->[Move (Register $ "t"++show x) [Memory "Hp" $ 3+x],Delete $ "t"++show x]) [1..n]++
+            [Locate $ n+6]
+            )
+            
+
+resolve :: SProc
+resolve=SProc "#resolve" ["t"]
+    [Alloc "cnt"
+    ,Copy (Register "t") [Register "cnt"]
+    ,While (Register "cnt")
+        [Val (Register "cnt") (-1)
+        ,Locate 1
+        ]
+    ,Move (Register "t") [Register "cnt"]
+    ,Copy (Memory "Hs" 0) [Register "t"]
+    ,While (Register "cnt")
+        [Val (Register "cnt") (-1)
+        ,Locate (-1)
+        ]
+    ,Delete "cnt"
+    ]
 
 isEqual :: SProc
 isEqual=SProc "#isEqual" ["x","y","f"]
