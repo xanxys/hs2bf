@@ -334,9 +334,10 @@ gcTransfer=SProc "#gcTransfer" []
         [Alloc "cnt"
         ,Copy (Memory "Hp" 0) [Register "cnt"]
         ,While (Register "cnt")
-            [Move (Memory "Hp" 0) [Memory "Hs" 0]
+            [Clear (Memory "Hs" 0)
+            ,Move (Memory "Hp" 0) [Memory "Hs" 0]
             ,Val (Register "cnt") (-1)
-            ,Locate (-1)
+            ,Locate 1
             ]
         ,Delete "cnt"
         ]
@@ -350,7 +351,9 @@ gcMark ns=SProc "#gcMark" []
     ,While (Memory "S0" 0)
         [Clear (Memory "Hp" 0)
         ,Copy (Memory "S0" 0) [Memory "Hp" 0]
+        ,Locate 1
         ]
+    ,Clear (Memory "Hp" 0)
     ,Locate (-1)
     ,Inline "#stack1S0" []
     ,Comment "top to bottom"
@@ -426,12 +429,81 @@ gcMark ns=SProc "#gcMark" []
 -- | Copy marked frames from Hs to Hp.
 gcCopy :: SProc
 gcCopy=SProc "#gcCopy" []
-    []
+    [While (Memory "Hs" 0)
+        [Alloc "cnt"
+        ,Move (Memory "Hs" 0) [Register "cnt"]
+        ,Alloc "flag"
+        ,Move (Memory "Hs" 1) [Register "flag"]
+        ,Dispatch "flag"
+            [(0,
+                [While (Register "cnt")
+                    [Val (Register "cnt") (-1)
+                    ,Locate 1
+                    ]
+                ])
+            ,(1,
+                [While (Register "cnt")
+                    [Val (Register "cnt") (-1)
+                    ,Clear (Memory "Hp" 0)
+                    ,Move (Memory "Hs" 0) [Memory "Hp" 0]
+                    ,Locate 1
+                    ]
+                ])
+            ]
+        ,Delete "cnt"
+        ,Delete "flag"
+        ]
+    ,Clear (Memory "Hp" 0)
+    ,Inline "#heap1Hp" []
+    ]
 
--- | Construct inverted table of address in Hs from Hp.
+-- | Construct OldAddr->NewAddr table in Hs.
+--
+-- O(n^2)
 gcIndex :: SProc
 gcIndex=SProc "#gcIndex" []
-    []
+    [Alloc "naddr"
+    ,While (Memory "Hp" 0)
+        [Alloc "cnt"
+        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,While (Register "cnt")
+            [Val (Register "cnt") (-1)
+            ,Locate 1
+            ]
+        ,Delete "cnt"
+        ,Val (Register "naddr") 1
+        ]
+    ,While (Register "naddr")
+        [Alloc "ta"
+        ,Copy (Register "naddr") [Register "ta"]
+        ,Val (Register "ta") 1
+        ,Inline "#heapRefHp" ["ta"]
+        ,Delete "ta"
+        ,Alloc "oaddr"
+        ,Copy (Memory "Hp" (-2)) [Register "oaddr"]
+        ,Inline "#heap1Hp" []
+        ,Comment "Write index"
+        ,Alloc "cnt"
+        ,Copy (Register "oaddr") [Register "cnt"]
+        ,While (Register "oaddr")
+            [Val (Register "cnt") (-1)
+            ,Locate 1
+            ]
+        ,Delete "cnt"
+        ,Locate (-1)
+        ,Clear (Memory "Hs" 0)
+        ,Copy (Register "naddr") [Memory "Hs" 0]
+        ,While (Register "oaddr")
+            [Val (Register "oaddr") (-1)
+            ,Locate (-1)
+            ]
+        ,Delete "oaddr"
+        ,Locate 1
+        ,Val (Register "naddr") (-1)
+        ]        
+    ,Delete "naddr"
+    ,Comment "Rewrite id field"
+    ]
 
 -- | Rewrite stack and Hp addressed based on the table in Hs.
 gcRewrite :: SProc
