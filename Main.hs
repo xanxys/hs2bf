@@ -120,7 +120,7 @@ partialChain opt from (c0,c1,g0,g1,s0,s1,b)=do
         LangBF       -> b  bf
 
 version :: String
-version="Haskell to Brainf**k Compiler: version 0.4"
+version="Haskell to Brainf**k Compiler: version 0.5"
 
 help :: String
 help=unlines $
