@@ -1,4 +1,6 @@
 module SRuntime where
+import Data.List
+
 import SAM
 
 appTag=0
@@ -13,7 +15,7 @@ genLibrary ns=concat
     ,genStackLib "Hp" -- frontier stack in GC
     ,genHeapLib "Hp" -- primiary heap
     ,genHeapLib "Hs" -- secondary heap for GC
-    ,[gc,gcTransfer,gcMark ns,gcCopy,gcIndex,gcRewrite ns,resolve]
+    ,genGCLib ns
     ,[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE]
     ,[isEqual,rewrite "S0",rewrite "Hp"]
     ]
@@ -200,7 +202,17 @@ exec :: [(String,Int)] -> SProc
 exec xs=SProc "%exec" ["sc"]
     [Alloc "cont"
     ,While (Register "sc")
-        [Dispatch "sc" $ (1,[]):map f xs
+        [Comment "run GC before executing SC"
+        ,Alloc "sct"
+        ,Copy (Register "sc") [Register "sct"]
+        ,Val (Register "sct") (-1)
+        ,While (Register "sct")
+            [Clear (Register "sct")
+            ,Inline "#gc" []
+            ]
+        ,Delete "sct"
+        ,Comment "execute SC"
+        ,Dispatch "sc" $ (1,[]):map f xs
         ,Val (Register "cont") 1
         ]
     ,While (Register "cont")
@@ -213,6 +225,7 @@ exec xs=SProc "%exec" ["sc"]
 
 
 
+-- | Generate heap libraries for given region.
 genHeapLib :: String -> [SProc]
 genHeapLib r=map ($r) [heap1,heapNew,heapNew_,heapTop,heapRef]
 
@@ -296,13 +309,15 @@ heapRef r=SProc ("#heapRef"++r) ["addr"]
         ]
     ]
 
+
+
 -- | Generate all stack utiltiy functions for given region.
 genStackLib r=map ($r) [stack1,stackNew,stackTop]
 
 -- | Return to address 1. Must be on stack($S\/=0).
 stack1 :: String -> SProc
 stack1 r=SProc ("#stack1"++r) []
-    [While (Memory r 0) [Locate (-1)],Locate 1]
+    [While (Memory r (-1)) [Locate (-1)]]
 
 -- | Move to stack new.
 stackNew :: String -> SProc
@@ -312,10 +327,13 @@ stackNew r=SProc ("#stackNew"++r) []
 -- | Move to stack top.
 stackTop :: String -> SProc
 stackTop r=SProc ("#stackTop"++r) []
-    [While (Memory r 0) [Locate 1]
-    ,Locate (-1)
-    ]
+    [While (Memory r 1) [Locate 1]]
 
+
+
+-- | Generate GC library from constructor arities.
+genGCLib :: [Int] -> [SProc]
+genGCLib ns=[gc,gcTransfer,gcMark ns,gcCopy ns,gcIndex,gcRewrite ns,resolve]
 
 -- | Origin -> Origin: Run packing GC.
 gc :: SProc
@@ -341,7 +359,8 @@ gcTransfer=SProc "#gcTransfer" []
             ]
         ,Delete "cnt"
         ]
-    ,Inline "#heap1s" []
+    ,Clear (Memory "Hs" 0)
+    ,Inline "#heap1Hs" []
     ]
         
 -- | Mark nodes from S, using Hp as /frontier/ stack. Argument is cons arity.
@@ -361,101 +380,116 @@ gcMark ns=SProc "#gcMark" []
     ,While (Memory "Hp" 0)
         [Alloc "addr"
         ,Move (Memory "Hp" 0) [Register "addr"]
-        ,Locate (-1)
         ,Inline "#stack1Hp" []
         ,Inline "#heapRefHs" ["addr"]
         ,Delete "addr"
-        ,Comment "flag:=1-gc; gc:=0"
-        ,Alloc "flag"
-        ,Val (Register "flag") 1
-        ,While (Memory "Hs" 1)
-            [Val (Memory "Hs" 1) (-1)
-            ,Val (Register "flag") (-1)
-            ]
+        ,Comment "already visited?"
+        ,Alloc "gf"
+        ,Move (Memory "Hs" 1) [Register "gf"]
         ,Val (Memory "Hs" 1) 1
-        ,While (Register "flag")
-            [Val (Register "flag") (-1)
-            ,Alloc "ntag"
-            ,Copy (Memory "Hs" 2) [Register "ntag"]
-            ,Dispatch "ntag" $
-                [(appTag,
-                    [Alloc "t1"
-                    ,Copy (Memory "Hs" 3) [Register "t1"]
-                    ,Alloc "t2"
-                    ,Copy (Memory "Hs" 4) [Register "t2"]
-                    ,Inline "#heap1Hs" []
-                    ,Inline "#stackNewHp" []
-                    ,Move (Register "t1") [Memory "Hp" 0]
-                    ,Delete "t1"
-                    ,Move (Register "t2") [Memory "Hp" 1]
-                    ,Delete "t2"
-                    ,Clear (Memory "Hp" 2)
-                    ,Locate 1
-                    ])
-                ,(scTag,
-                    [Inline "#heap1Hs" []
-                    ,While (Memory "Hp" 0) [Inline "#stackTopHp" []]
-                    ])
-                ,(constTag,
-                    [Inline "#heap1Hs" []
-                    ,While (Memory "Hp" 0) [Inline "#stackTopHp" []]
-                    ])
-                ]++
-                if null ns then [] else
-                [(structTag,
-                    [Alloc "sz"
-                    ,Copy (Memory "Hs" 0) [Register "sz"]
-                    ,Dispatch "sz" $ map f ns
-                    ,Delete "sz"
-                    ])
+        ,Dispatch "gf"
+            [(0,
+                [Alloc "ntag"
+                ,Copy (Memory "Hs" 2) [Register "ntag"]
+                ,Dispatch "ntag" $
+                    [(appTag,
+                        [Alloc "t1"
+                        ,Copy (Memory "Hs" 3) [Register "t1"]
+                        ,Alloc "t2"
+                        ,Copy (Memory "Hs" 4) [Register "t2"]
+                        ,Inline "#heap1Hs" []
+                        ,Inline "#stackNewHp" []
+                        ,Move (Register "t1") [Memory "Hp" 0]
+                        ,Delete "t1"
+                        ,Move (Register "t2") [Memory "Hp" 1]
+                        ,Delete "t2"
+                        ,Clear (Memory "Hp" 2)
+                        ,Locate 1
+                        ])
+                    ,(scTag,
+                        [Inline "#heap1Hs" []
+                        ,Inline "#stackTopHp" []
+                        ])
+                    ,(constTag,
+                        [Inline "#heap1Hs" []
+                        ,Inline "#stackTopHp" []
+                        ])
+                    ]++
+                    if null ns then [] else
+                    [(structTag,
+                        [Alloc "sz"
+                        ,Copy (Memory "Hs" 0) [Register "sz"]
+                        ,Dispatch "sz" $ map f ns
+                        ,Delete "sz"
+                        ])
+                    ]
+                ,Delete "ntag"
+                ])
+            ,(1,
+                [Inline "#heap1Hs" []
+                ,Inline "#stackTopHp" []
                 ]
-            ,Delete "ntag"
-            ]
-        ,Delete "flag"
+            )]
+        ,Delete "gf"
         ]
     ]
     where
         f n=(n+6,
-            concatMap (\x->[Alloc $ "t"++show x,Copy (Memory "Hs" $ x+3) [Register $ "t"++show x]]) [1..n]++
+            concatMap (\x->[Alloc $ tempN x,Copy (Memory "Hs" $ x+3) [Register $ tempN x]]) [1..n]++
             [Inline "#heap1Hs" []
             ,Inline "#stackNewHp" []
             ]++
-            concatMap (\x->[Move (Register $ "t"++show x) [Memory "Hp" $ x-1],Delete $ "t"++show x]) [1..n]++
+            concatMap (\x->[Move (Register $ tempN x) [Memory "Hp" $ x-1],Delete $ tempN x]) [1..n]++
             [Clear (Memory "Hp" n),Locate $ n-1]
             )
 
 
 
 -- | Copy marked frames from Hs to Hp.
-gcCopy :: SProc
-gcCopy=SProc "#gcCopy" []
+gcCopy :: [Int] -> SProc
+gcCopy ns=SProc "#gcCopy" []
     [While (Memory "Hs" 0)
-        [Alloc "cnt"
-        ,Move (Memory "Hs" 0) [Register "cnt"]
-        ,Alloc "flag"
+        [Alloc "flag"
         ,Move (Memory "Hs" 1) [Register "flag"]
         ,Dispatch "flag"
             [(0,
-                [While (Register "cnt")
+                [Alloc "cnt"
+                ,Copy (Memory "Hs" 0) [Register "cnt"]
+                ,While (Register "cnt")
                     [Val (Register "cnt") (-1)
                     ,Locate 1
                     ]
+                ,Delete "cnt"
                 ])
             ,(1,
-                [While (Register "cnt")
-                    [Val (Register "cnt") (-1)
-                    ,Clear (Memory "Hp" 0)
-                    ,Move (Memory "Hs" 0) [Memory "Hp" 0]
-                    ,Locate 1
-                    ]
+                [Alloc "size"
+                ,Copy (Memory "Hs" 0) [Register "size"]
+                ,Dispatch "size" $ map f ss
+                ,Delete "size"
                 ])
             ]
-        ,Delete "cnt"
         ,Delete "flag"
         ]
-    ,Clear (Memory "Hp" 0)
-    ,Inline "#heap1Hp" []
+    ,Inline "#heap1Hs" []
     ]
+    where
+        f s=(s,
+            concatMap (\x->[Alloc $ tempN x,Copy (Memory "Hs" $ 1+x) [Register $ tempN x]]) [1..s-2]++
+            [Inline "#heap1Hs" []
+            ,Inline "#heapNew_Hp" []
+            ,Move (Register $ tempN $ s-2) [Memory "Hp" 0,Memory "Hp" $ s-1]
+            ,Delete $ tempN $ s-2
+            ]++
+            concatMap (\x->[Move (Register $ tempN x) [Memory "Hp" $ 1+x],Delete $ tempN x]) [1..s-3]++
+            [Clear (Memory "Hp" 1)
+            ,Clear (Memory "Hp" s)
+            ,Inline "#heap1Hp" []
+            ]
+            )
+        ss=nub $ map (6+) ns++[6,7]
+
+
+
 
 -- | Construct OldAddr->NewAddr table in Hs.
 --
@@ -484,31 +518,46 @@ gcIndex=SProc "#gcIndex" []
         ,Inline "#heap1Hp" []
         ,Comment "Write index"
         ,Alloc "cnt"
+        ,Val (Register "oaddr") (-1)
         ,Copy (Register "oaddr") [Register "cnt"]
-        ,While (Register "oaddr")
+        ,While (Register "cnt")
             [Val (Register "cnt") (-1)
             ,Locate 1
             ]
         ,Delete "cnt"
-        ,Locate (-1)
-        ,Clear (Memory "Hs" 0)
+        ,Clear (Memory "Hs" 0) -- Clear (Memory "Hs" 1) is UNNECESSARY! (lookup doesnt depend on stack top)
         ,Copy (Register "naddr") [Memory "Hs" 0]
         ,While (Register "oaddr")
             [Val (Register "oaddr") (-1)
             ,Locate (-1)
             ]
         ,Delete "oaddr"
-        ,Locate 1
         ,Val (Register "naddr") (-1)
-        ]        
+        ]
     ,Delete "naddr"
     ,Comment "Rewrite id field"
+    ,Alloc "naddr"
+    ,While (Memory "Hp" 0)
+        [Alloc "cnt"
+        ,Copy (Memory "Hp" 0) [Register "cnt"]
+        ,While (Register "cnt")
+            [Val (Register "cnt") (-1)
+            ,Locate 1
+            ]
+        ,Delete "cnt"
+        ,Val (Register "naddr") 1
+        ,Clear (Memory "Hp" (-2))
+        ,Copy (Register "naddr") [Memory "Hp" (-2)]
+        ]
+    ,Delete "naddr"
+    ,Inline "#heap1Hp" []
     ]
 
 -- | Rewrite stack and Hp addressed based on the table in Hs.
 gcRewrite :: [Int] -> SProc
 gcRewrite ns=SProc "#gcRewrite" []
-    [While (Memory "Hp" 0)
+    [Comment "Rewrite heap"
+    ,While (Memory "Hp" 0)
         [Alloc "ntag"
         ,Copy (Memory "Hp" 2) [Register "ntag"]
         ,Dispatch "ntag"
@@ -533,15 +582,39 @@ gcRewrite ns=SProc "#gcRewrite" []
             ,(scTag,[Locate 6])
             ,(constTag,[Locate 6])
             ,(structTag,
-                [Alloc "stag"
-                ,Copy (Memory "Hp" 3) [Register "stag"]
-                ,Dispatch "stag" $ map f ns
-                ,Delete "stag"
+                [Alloc "nsize"
+                ,Copy (Memory "Hp" 0) [Register "nsize"]
+                ,Dispatch "nsize" $ map f ns
+                ,Delete "nsize"
                 ])
             ]
         ,Delete "ntag"
         ]
     ,Inline "#heap1Hp" []
+    ,Comment "Rewrite stack"
+    ,Alloc "size"
+    ,While (Memory "S0" 0)
+        [Val (Register "size") 1
+        ,Locate 1
+        ]
+    ,While (Register "size")
+        [Locate (-1)
+        ,Val (Register "size") (-1)
+        ,Alloc "val"
+        ,Move (Memory "S0" 0) [Register "val"]
+        ,Inline "#stack1S0" []
+        ,Inline "#resolve" ["val"]
+        ,Alloc "cnt"
+        ,Copy (Register "size") [Register "cnt"]
+        ,While (Register "cnt")
+            [Val (Register "cnt") (-1)
+            ,Locate 1
+            ]
+        ,Delete "cnt"
+        ,Move (Register "val") [Memory "S0" 0]
+        ,Delete "val"
+        ]
+    ,Delete "size"
     ]
     where
         f n=(n+6,
@@ -561,7 +634,8 @@ gcRewrite ns=SProc "#gcRewrite" []
 
 resolve :: SProc
 resolve=SProc "#resolve" ["t"]
-    [Alloc "cnt"
+    [Val (Register "t") (-1)
+    ,Alloc "cnt"
     ,Copy (Register "t") [Register "cnt"]
     ,While (Register "cnt")
         [Val (Register "cnt") (-1)
@@ -607,4 +681,5 @@ rewrite r=SProc ("#rewrite"++r) ["from","to"]
     ,Delete "flag"
     ]
 
+tempN x="t"++show x
 
