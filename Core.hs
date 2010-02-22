@@ -36,10 +36,18 @@ type LocHint=String
 
 
 data Core=Core [CrData] [CrProc]
-data CrData=CrData CrName [CrName] [(CrName,[CrType])] deriving(Show)
+data CrData=CrData CrName [CrName] [(CrName,[(Bool,CrType)])] deriving(Show)
 data CrProc=CrProc CrName [CrName] CrExpr deriving(Show)
 
 
+library=M.fromList
+    [("undefined",[UError "undefined"])
+    ,("addByteRaw",f AAdd)
+    ,("subByteRaw",f ASub)
+    ,("cmpByteRaw",f CCmp)
+    ,("seq",[PushArg 1,Push 0,Reduce RAny,Update 1,Pop 1,PushArg 2,Slide 3])
+    ]
+    where f op=[PushArg 2,PushArg 2,Arith op,Slide 3]
 
 
 
@@ -56,7 +64,7 @@ uniquifyP m r (CrProc n as e)=CrProc n (map (m' M.!) as) $ uniquifyE m' r e
     where m'=bind r m as
 
 uniquifyE :: M.Map CrName CrName -> String -> CrExpr -> CrExpr
-uniquifyE m r (CrVar v)=CrVar $ m M.! v
+uniquifyE m r (CrVar v)=CrVar $ M.findWithDefault (error $ "uniquifyE:"++v) v m
 uniquifyE m r (CrApp e0 e1)=CrApp (uniquifyE m n1 e0) (uniquifyE m n2 e1)
     where [n1,n2]=branch 2 r
 uniquifyE m r (CrCstr t es)=CrCstr t $ zipWith (uniquifyE m) ns es
@@ -171,24 +179,24 @@ replaceVar t e=e
 
 
 compile :: Core -> Process (M.Map String [GMCode])
-compile (Core ds ps)=return $ M.fromList $ undef:map (compileP m) (ps++pds)
+compile (Core ds ps)=return $ M.union library $ M.fromList (map (compileP m) (ps++pds))
     where
         m=M.fromList cons
         (pds,cons)=unzip $ concatMap convertData ds
-        undef=("undefined",[UError "undefined"])
 
 
 -- | Convert one data declaration to procs and cons.
 convertData :: CrData -> [(CrProc,(String,Int))]
 convertData (CrData _ _ cs)=zipWith convertDataCon [0..] cs
 
--- tag, not arity
-convertDataCon :: Int -> (CrName,[CrType]) -> (CrProc,(String,Int))
-convertDataCon t (name,xs)=
-    (CrProc name args $ CrCstr t $ map CrVar args,(name,t))
+-- | Int argument is a tag, not an arity
+convertDataCon :: Int -> (CrName,[(Bool,CrType)]) -> (CrProc,(String,Int))
+convertDataCon t (name,xs)=(CrProc name (map snd args) exp,(name,t))
     where
-        args=take n $ stringSeq "#d"
-        n=length xs
+        exp=foldr (\v e->multiApp (CrVar "seq") [v,e]) con $ map (CrVar . snd) sarg
+        con=CrCstr t $ map (CrVar . snd) args
+        sarg=filter (fst . fst) args
+        args=zip xs $ stringSeq "#d"
 
 
 
@@ -219,7 +227,7 @@ smplE t (CrCase ec cs)
         
         nrmcons=map (\(x,y,z)->(x,y,smplE t z)) nrmcs
         cocons x=map (\(c,n)->(c,replicate n "",smplE t x)) $ F.toList s
-        s=S.difference (t M.! (fst $ head cons)) (S.fromList cons)
+        s=S.difference (M.findWithDefault (error "smplE") (fst $ head cons) t) (S.fromList cons)
         cons=filter (not . null . fst) $ map (\(x,y,_)->(x,length y)) cs
 smplE t x=x
     

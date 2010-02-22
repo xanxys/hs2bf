@@ -1,6 +1,5 @@
 
-main=outputStr Halt "Hello World!"
---main=outputStr Halt "He"
+main=outputStr Halt "Hello!"
 
 outputStr k []=k
 outputStr k (x:xs)=Output x (outputStr k xs)

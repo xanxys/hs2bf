@@ -14,9 +14,8 @@ and test_bf test/ExplicitCase.hs
 and test_bf test/Hello.hs
 and test_bf test/LocalFun.hs
 and test_bf test/Lambda.hs
-# and test_bf test/CharIf.hs
-# and test_bf test/Numeric.hs
-# and test_bf test/Arithmetic.hs
+and test_bf test/Arithmetic.hs
+# and test_bf test/TypeClass.hs
 # and test_bf test/ConstPattern.hs
 # and test_bf test/
 

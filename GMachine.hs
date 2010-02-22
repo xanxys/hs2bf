@@ -165,6 +165,8 @@ fPos (UnPack _)=StackA
 fPos (Update _)=StackT
 fPos (Pop _)=StackT
 fPos (GMachine.Alloc _)=fPos $ PushByte 0
+fPos (Arith _)=StackT
+fPos (UError _)=StackA -- any position will do, actually.
 fPos x=error $ show x
 
 
@@ -397,6 +399,76 @@ compileCode m (UError s:_)=Clear ptr:concatMap (\d->[Val ptr d,Output ptr]) ds
         ds=head ns:zipWith (-) (tail ns) ns
         ns=map ord s
         ptr=Memory "S0" 0
+compileCode m (Arith op:is)=contWith m StackT is $
+    [SAM.Alloc "x"
+    ,SAM.Alloc "y"
+    ,Move (Memory "S0" 0) [Register "x"]
+    ,Move (Memory "S0" (-1)) [Register "y"]
+    ,Locate (-2)
+    ,Inline "#stack1S0" []
+    ,Inline "#heapRefHp" ["x"]
+    ,Copy (Memory "Hp" 3) [Register "x"]
+    ,Inline "#heap1Hp" []
+    ,Inline "#heapRefHp" ["y"]
+    ,Delete "y"
+    ,SAM.Alloc "temp"
+    ,Copy (Memory "Hp" 3) [Register "temp"]
+    ]++
+    f (Register "temp") (Register "x") op++
+    [Delete "temp"
+    ,SAM.Alloc "addr"
+    ,Inline "#heapNewHp" ["addr"]
+    ,Clear (Memory "Hp" 0) ,Val (Memory "Hp" 0) 6
+    ,Clear (Memory "Hp" 1) ,Val (Memory "Hp" 1) 0
+    ,Clear (Memory "Hp" 2) ,Val (Memory "Hp" 2) $ tag op
+    ,Clear (Memory "Hp" 3) ,Move (Register "x") [Memory "Hp" 3] ,Delete "x"
+    ,Clear (Memory "Hp" 4) ,Copy (Register "addr") [Memory "Hp" 4]
+    ,Clear (Memory "Hp" 5) ,Val (Memory "Hp" 5) 6
+    ,Clear (Memory "Hp" 6)
+    ,Inline "#heap1Hp" []
+    ,Inline "#stackNewS0" []
+    ,Move (Register "addr") [Memory "S0" 0]
+    ,Delete "addr"
+    ]
+    where
+        tag CCmp=structTag
+        tag _=constTag
+        f from to AAdd=[While from [Val from (-1),Val to 1]]
+        f from to ASub=[While from [Val from (-1),Val to (-1)]]
+        f from to CCmp=
+            [SAM.Alloc "t"
+            ,Val (Register "t") 1
+            ,While (Register "t")
+                [SAM.Alloc "s"
+                ,Copy from [Register "s"]
+                ,Val (Register "t") 1
+                ,While (Register "s")
+                    [Clear (Register "s")
+                    ,Val (Register "t") (-1)
+                    ]
+                ,Copy to [Register "s"]
+                ,While (Register "s")
+                    [Clear (Register "s")
+                    ,Val (Register "t") (-1)
+                    ]
+                ,Val (Register "s") 1
+                ,While (Register "t")
+                    [Clear (Register "t")
+                    ,Val (Register "s") (-1)
+                    ]
+                ,Move (Register "s") [Register "t"]
+                ,Delete "s"
+                ,Val from (-1)
+                ,Val to (-1)
+                ]
+            ,Val from 1
+            ,Val to 1
+            ,While from [Clear from,Val (Register "t") 1]
+            ,While to [Clear to,Val (Register "t") 2]
+            ,Move (Register "t") [to] -- 0:EQ 1:from>to 2:to<from
+            ,Delete "t"
+            ]
+          
 
 
 
@@ -412,18 +484,29 @@ data GMCode
     =Slide Int -- ^ pop 1st...nth items
     |Update Int -- ^ replace all reference to the nth address to 0th address.
     |Pop Int -- ^ remove n items
-    |MkApp -- ^ function must be pushed after arguments. then use this.
     |Push Int
-    |PushArg Int
     |PushSC String
-    |PushByte Int
+    |Alloc Int
+    |Swap -- ^ used for implementing 'elimReduce'
+    |Reduce RHint -- ^ reduce stack top to WHNF
+    -- function
+    |MkApp -- ^ function must be pushed after arguments. then use this.
+    |PushArg Int
+    -- data structure
     |Pack Int Int
     |Case [(Int,[GMCode])]
     |UnPack Int
-    |Alloc Int
-    |Reduce RHint -- ^ reduce stack top to WHNF
-    |Swap -- ^ used for implementing 'elimReduce'
+    -- arithmetic
+    |PushByte Int
+    |Arith ArithOp
+    -- error
     |UError String -- ^ output the given string with undefined consequence
+    deriving(Show)
+
+data ArithOp
+    =AAdd
+    |ASub
+    |CCmp
     deriving(Show)
 
 data RHint
@@ -554,6 +637,14 @@ evalGM fl fs (Update n:xs)=do
         fH f t (Struct tag xs)=Struct tag $ map (fS f t) xs
         fH _ _ x=x
 evalGM fl fs (GMachine.Alloc n:xs)=evalGM fl fs $ replicate n (PushByte 0)++xs
+evalGM fl fs (Arith op:xs)=do
+    Const x<-pop >>= refHeap
+    Const y<-pop >>= refHeap
+    case op of
+        AAdd -> alloc (Const $ (x+y) `mod` 256) >>= push
+        ASub -> alloc (Const $ (x-y) `mod` 256) >>= push
+        CCmp -> alloc (Struct (if x==y then 0 else if x<y then 1 else 2) []) >>= push
+    evalGM fl fs xs
 evalGM _ _ x=error $ "evalGM: unsupported: "++show x
 
 
@@ -580,11 +671,8 @@ collect heap addr=S.insert addr $
         _ -> S.empty
 
 
-refHeap0 :: Monad m => Address -> GMST m GMNode
-refHeap0 addr=liftM ((M.!addr) . heap) get
-
 refHeap :: Monad m => Address -> GMST m GMNode
-refHeap addr=refHeap0 addr
+refHeap addr=liftM ((M.!addr) . heap) get
 
 refStack :: Monad m => Int -> GMST m Address
 refStack n=liftM ((!!n) . stack) get

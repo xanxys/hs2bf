@@ -130,8 +130,10 @@ convDataDecl :: HsDecl -> CrData
 convDataDecl (HsDataDecl loc ctx (HsIdent name) vars cons derv)=
     CrData name [] $ map convDataCon cons
 
-convDataCon :: HsConDecl -> (CrName,[CrType])
-convDataCon (HsConDecl loc (HsIdent name) ts)=(name,replicate (length ts) undefined)
+convDataCon :: HsConDecl -> (CrName,[(Bool,CrType)])
+convDataCon (HsConDecl loc (HsIdent name) ts)=(name,map f ts)
+    where f (HsBangedTy ty)=(True,convType ty)
+          f (HsUnBangedTy ty)=(False,convType ty)
 
 convFunDecl :: HsDecl -> CrProc
 convFunDecl (HsFunBind [HsMatch loc (HsIdent n) args (HsUnGuardedRhs e) []])
@@ -150,7 +152,8 @@ convExp (HsLambda loc as e)=CrLm (map f as) (convExp e)
 convExp (HsVar (UnQual (HsIdent x)))=CrVar x
 convExp (HsApp e0 e1)=CrApp (convExp e0) (convExp e1)
 convExp e@(HsCase _ _)=convFullCase e
-convExp (HsLit (HsInt n))=error "convExp: int"-- CrA (h,Nothing) $ CrInt $ fromIntegral n
+-- convExp (HsLit (HsInt n))=error "convExp: int"-- CrA (h,Nothing) $ CrInt $ fromIntegral n
+convExp (HsLit (HsInt n))=CrByte $ fromIntegral n
 convExp (HsLit (HsChar ch))=CrByte $ fromIntegral $ ord ch
 convExp (HsLet bs e)=CrLet True (map (toVP . convFunDecl) bs) (convExp e)
     where
@@ -160,6 +163,11 @@ convExp (HsLet bs e)=CrLet True (map (toVP . convFunDecl) bs) (convExp e)
 convExp e=error $ "ERROR:convExp:"++show e
 
 
+convType :: HsType -> CrType
+convType (HsTyVar (HsIdent x))=CrTyVar x
+convType (HsTyCon (UnQual (HsIdent x)))=CrTyCon x
+convType (HsTyApp t0 t1)=CrTyApp (convType t0) (convType t1)
+convType t=error $ "convType: "++show t
 
 
 -- | Convert 'HsCase'(desugared) to 'CrExpr'
@@ -412,8 +420,8 @@ instance WeakDesugar HsExp where
     wds (HsLeftSection e op)=HsApp (opToExp op) (wds e)
     wds (HsRightSection op e)=HsApp (HsApp (HsVar (UnQual (HsIdent "flip"))) (opToExp op)) (wds e)
     wds (HsIf c e0 e1)=HsCase (wds c)
-        [HsAlt wdsDummySrc (HsPVar (HsIdent "True")) (HsUnGuardedAlt (wds e0)) []
-        ,HsAlt wdsDummySrc (HsPVar (HsIdent "False")) (HsUnGuardedAlt (wds e1)) []]
+        [HsAlt wdsDummySrc (HsPApp (UnQual (HsIdent "True" )) []) (HsUnGuardedAlt (wds e0)) []
+        ,HsAlt wdsDummySrc (HsPApp (UnQual (HsIdent "False")) []) (HsUnGuardedAlt (wds e1)) []]
     wds (HsCase e als)=HsCase (wds e) (map wds als)
     wds (HsLet decls e)=HsLet (map wds decls) (wds e)
     wds (HsLambda loc ps e)=HsLambda loc (map wds ps) (wds e)
@@ -481,7 +489,6 @@ instance WeakDesugar HsRhs where
 unguardG :: (a -> (HsExp,HsExp)) -> [a] -> HsExp
 unguardG _ []=HsVar $ UnQual $ HsIdent "undefined"
 unguardG f (x:xs)=let (cond,exp)=f x in HsIf cond exp $ unguardG f xs
-
 
 wdsDummySrc=SrcLoc "<WeakDesugar>" 0 0
 

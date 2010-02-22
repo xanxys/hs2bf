@@ -16,7 +16,7 @@ genLibrary ns=concat
     ,genHeapLib "Hp" -- primiary heap
     ,genHeapLib "Hs" -- secondary heap for GC
     ,genGCLib ns
-    ,[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalStr,evalE]
+    ,[rootProc,setupMemory,mainLoop,eval,evalApp,evalSC,evalConst,evalStr,evalE]
     ,[isEqual,rewrite "S0",rewrite "Hp"]
     ]
 
@@ -74,7 +74,7 @@ eval=SProc "%eval" ["sc"]
     ,Dispatch "tag"
         [(appTag,[Inline "%evalApp" []])
         ,(scTag,[Inline "%evalSC" ["sc"]])
-        ,(constTag,[])
+        ,(constTag,[Inline "%evalConst" ["sc"]])
         ,(structTag,[Inline "%evalStr" ["sc"]])
         ]
     ,Delete "tag"
@@ -96,6 +96,22 @@ evalSC=SProc "%evalSC" ["sc"]
     ,Inline "#heap1Hp" []
     ]
 
+evalConst=SProc "%evalConst" ["sc"]
+    [Inline "#heap1Hp" []
+    ,Inline "#stackTopS0" []
+    ,While (Memory "S0" (-1)) -- non-root frame -> get sc
+        [Val (Register "sc") (-1) -- sc:=0
+        ,Alloc "addr"
+        ,Move (Memory "S0" (-1)) [Register "addr"]
+        ,Move (Memory "S0" 0) [Memory "S0" (-1)] -- move exp to top
+        ,Locate (-1)
+        ,Inline "#stack1S0" []
+        ,Inline "#heapRefHp" ["addr"]
+        ,Delete "addr"
+        ,Copy (Memory "Hp" 3) [Register "sc"]
+        ,Inline "#heap1Hp" []
+        ]
+    ]
 
 evalStr=SProc "%evalStr" ["sc"]
     [Inline "#heap1Hp" []
@@ -474,8 +490,10 @@ gcCopy ns=SProc "#gcCopy" []
     ]
     where
         f s=(s,
-            concatMap (\x->[Alloc $ tempN x,Copy (Memory "Hs" $ 1+x) [Register $ tempN x]]) [1..s-2]++
-            [Inline "#heap1Hs" []
+            concatMap (\x->[Alloc $ tempN x,Move (Memory "Hs" $ 1+x) [Register $ tempN x]]) [1..s-3]++
+            [Alloc $ tempN $ s-2
+            ,Copy (Memory "Hs" $ s-1) [Register $ tempN $ s-2]
+            ,Inline "#heap1Hs" []
             ,Inline "#heapNew_Hp" []
             ,Move (Register $ tempN $ s-2) [Memory "Hp" 0,Memory "Hp" $ s-1]
             ,Delete $ tempN $ s-2
