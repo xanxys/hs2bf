@@ -317,7 +317,7 @@ moveDecls e ds=HsLet ds e
 -- | Merge multiple 'HsMatch' in HsFunBind into one.
 mergeMatches :: [HsMatch] -> HsDecl
 mergeMatches []=error "Front: mergeMatches: empty [HsMatch] found!"
-mergeMatches [m]=HsFunBind [m]
+-- mergeMatches [m]=HsFunBind [m]
 mergeMatches ms=HsFunBind [HsMatch loc0 n0 (map HsPVar args) (HsUnGuardedRhs expr) []]
     where
         HsMatch loc0 n0 ps0 _ _=head ms

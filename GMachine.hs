@@ -90,7 +90,8 @@ rlscAux m col front
     |otherwise    = rlscAux m col' (S.difference new col')
     where
         col'=S.union col front
-        new=S.unions $ map (S.unions . map collectDepSC . (m M.!)) $ S.toList front
+        new=S.unions $ map (S.unions . map collectDepSC . find) $ S.toList front
+        find x=M.findWithDefault (error $ "rlscAux:"++show x) x m
 
 
 collectDepSC :: GMCode -> S.Set String

@@ -2,6 +2,7 @@
 
 function test_bf
     echo "=== $argv[1] ==="
+    rm -f test/(basename $argv[1] .hs).bf
     ~/devenv/hs2bf/hs2bf --make $argv[1] > test/(basename $argv[1] .hs).bf
     time -f 'user:%U sys:%S' ~/bin/bfi test/(basename $argv[1] .hs).bf
     echo ""
@@ -15,9 +16,8 @@ and test_bf test/Hello.hs
 and test_bf test/LocalFun.hs
 and test_bf test/Lambda.hs
 and test_bf test/Arithmetic.hs
+and test_bf test/ShowList.hs
+# and test_bf test/QuickSort.hs
 # and test_bf test/TypeClass.hs
 # and test_bf test/ConstPattern.hs
 # and test_bf test/
-
-rm -f test/*.bf
-

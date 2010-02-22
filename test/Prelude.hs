@@ -13,6 +13,7 @@ data Ordering
 
 data XT1 a=XT1 a
 data XT2 a b=XT2 a b
+data XT3 a b c=XT3 a b c
 
 data XList a
     =XCons a (XList a)
@@ -77,4 +78,36 @@ addInt (NInt x) (PInt y)
     |otherwise    = PInt $ y `subByte` x
 
 -}
+
+
+-- list functions
+head (x:xs)=x
+tail (x:xs)=xs
+
+reverse []=[]
+reverse (x:xs)=reverse xs++[x]
+
+map f []=[]
+map f (x:xs)=f x:map f xs
+
+filter f []=[]
+filter f (x:xs)
+    |f x       = x:filter f xs
+    |otherwise = filter f xs
+
+(x:xs) !! n
+    |n `eqByte` 0 = x
+    |otherwise    = xs !! (n `subByte` 1)
+
+[]++ys=ys
+(x:xs)++ys=x:(xs++ys)
+
+length []=0
+length (x:xs)=1 `addByte` (length xs)
+
+foldr f z []=z
+foldr f z (x:xs)=f x (foldr f z xs)
+
+foldl f z []=z
+foldl f z (x:xs)=foldl f (f x z) xs
 
