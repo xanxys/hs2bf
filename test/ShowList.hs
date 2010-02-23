@@ -1,6 +1,6 @@
 
 
-main=outputStr Halt (map showByte1 [1,2,3,4])
+main=outputStr Halt ((map showByte1 [1,2,3])++"\n")
 
 showByte1 x=addByte '0' x
 

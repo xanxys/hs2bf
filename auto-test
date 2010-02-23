@@ -17,7 +17,7 @@ and test_bf test/LocalFun.hs
 and test_bf test/Lambda.hs
 and test_bf test/Arithmetic.hs
 and test_bf test/ShowList.hs
-# and test_bf test/QuickSort.hs
+and test_bf test/QuickSort.hs
 # and test_bf test/TypeClass.hs
 # and test_bf test/ConstPattern.hs
 # and test_bf test/

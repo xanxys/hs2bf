@@ -1,5 +1,7 @@
 
+infixr 0 $
 f $ x=f x
+
 f $! x=x `seq` (f x)
 
 data Bool
@@ -99,8 +101,16 @@ filter f (x:xs)
     |n `eqByte` 0 = x
     |otherwise    = xs !! (n `subByte` 1)
 
+{- I don't know why, but this code doesn't work!
 []++ys=ys
 (x:xs)++ys=x:(xs++ys)
+-}
+
+xs ++ ys=
+    case xs of
+        []   -> ys
+        x:xs -> x:(xs++ys)
+    
 
 length []=0
 length (x:xs)=1 `addByte` (length xs)

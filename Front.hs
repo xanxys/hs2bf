@@ -411,6 +411,7 @@ instance WeakDesugar HsDecl where
     wds (HsTypeSig loc ns ty)=HsTypeSig loc ns ty
     wds (HsDataDecl loc [] n vs cdecls [])=HsDataDecl loc [] n vs cdecls []
     wds (HsDataDecl _ _ _ _ _ _)=error "WeakDesugar: HsDataDecl: context/deriving is not supported"
+    wds (HsInfixDecl loc assoc lv ops)=HsInfixDecl loc assoc lv ops
 
 instance WeakDesugar HsExp where
     wds (HsApp e0 e1)=HsApp (wds e0) (wds e1)
