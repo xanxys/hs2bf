@@ -1,0 +1,23 @@
+name:            hs2bf
+cabal-version:   >=1.2
+version:         0.5
+author:          xanxys
+maintainer:      xanxys@gmail.com
+synopsis:        Haskell to Brainfu*k compiler
+license:         BSD3
+license-File:    LICENSE
+category:        Compiler
+description:     Haskell to Brainfu*k compiler.
+build-type:      Simple
+data-files:      Prelude.hs
+data-dir:        test
+tested-with:     GHC==6.10.4
+extra-source-files:
+    Front.hs Core.hs GMachine.hs SAM.hs SCGR.hs Brainfuck.hs
+    Util.hs SRuntime.hs
+executable hs2bf
+    main-is: Main.hs
+    build-depends:
+        containers>=0.1, base>=4, mtl>=1, array>=0.2,
+        filepath>=1, directory>=1, haskell-src>=1
+

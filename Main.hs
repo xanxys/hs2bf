@@ -15,6 +15,7 @@ import Control.Monad
 import System.Environment
 import System.FilePath.Posix
 import System.IO
+import qualified Paths_hs2bf
 
 import Util
 import qualified Front
@@ -101,7 +102,8 @@ execCommand (Compile opt from)=partialChain opt from $
     where f g=runProcessWithIO (putStr . g)
 
 partialChain opt from (c0,c1,g0,g1,s0,s1,b)=do
-    let (mod,env)=analyzeName from
+    dir<-liftM takeDirectory $ Paths_hs2bf.getDataFileName "Prelude.hs"
+    let (mod,env)=analyzeName from dir
     xs<-Front.collectModules env mod
     let cr  =xs   >>= Front.compile
         cr' =cr   >>= Core.simplify
@@ -154,8 +156,8 @@ help=unlines $
 
 
 
-analyzeName :: String -> (String,Front.ModuleEnv)
-analyzeName n=(takeBaseName n,Front.ModuleEnv [dirPrefix++takeDirectory n,"./test"])
+analyzeName :: String -> FilePath -> (String,Front.ModuleEnv)
+analyzeName n lib=(takeBaseName n,Front.ModuleEnv [dirPrefix++takeDirectory n,lib])
     where dirPrefix=if isAbsolute n then "" else "./"
 
 

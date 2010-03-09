@@ -2,8 +2,15 @@
 
 HsColour -print-css > doc/hscolour.css
 
+# generate file list
 for i in *.hs
+    if test $i != Setup.hs
+        set FLIST $FLIST $i
+    end
+end
+
+for i in $FLIST
     HsColour -odoc/$i.html -css -anchor $i
 end
 
-haddock -h --source-module="%F.html" --source-entity="%F.html#line-%L" -o doc *.hs
+haddock -h --source-module="%F.html" --source-entity="%F.html#line-%L" -o doc $FLIST
