@@ -51,7 +51,7 @@ data Option=Option
 
 -- | Parse arguments to 'Command'. Note this is a total function.
 parseArgs :: [String] -> Command
-parseArgs []=ShowMessage version
+parseArgs []=ShowMessage $ version++"\n"++help
 parseArgs ("-v":_)=ShowMessage version
 parseArgs ("--version":_)=ShowMessage version
 parseArgs ("-h":_)=ShowMessage $ version++"\n"++help
@@ -102,7 +102,7 @@ execCommand (Compile opt from)=partialChain opt from $
     where f g=runProcessWithIO (putStr . g)
 
 partialChain opt from (c0,c1,g0,g1,s0,s1,b)=do
-    dir<-liftM takeDirectory $ Paths_hs2bf.getDataFileName "Prelude.hs"
+    dir<-Paths_hs2bf.getDataDir
     let (mod,env)=analyzeName from dir
     xs<-Front.collectModules env mod
     let cr  =xs   >>= Front.compile
@@ -142,7 +142,7 @@ help=unlines $
     ,"  -Sgr: to GMachine (simplified)"
     ,"  -Ss : to SAM"
     ,"  -Ssf: to SAM (most simplified)"
-    ,"  -Sr : to SCGR"
+--    ,"  -Sr : to SCGR" -- not implemented
     ,"  -Sb : to BF"
     ,"  --addr n : use n byte for pointer arithmetic"
     ,"  --debug : include detailed error message (this will make the program a LOT larger)"

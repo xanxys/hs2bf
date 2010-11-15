@@ -139,7 +139,8 @@ collectV (CrApp e0 e1)=collectV e0 `S.union` collectV e1
 collectV (CrLet _ bs e)=S.unions $ map collectV $ e:map snd bs
 collectV (CrCase e cs)=S.unions $ map collectV $ e:map thr3 cs
 collectV (CrLm as e)=collectV e
-
+collectV (CrByte _)=S.empty
+collectV e=error $ "collectV: "++show e
 
 
 

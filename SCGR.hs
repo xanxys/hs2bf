@@ -1,4 +1,4 @@
--- | Super-cool-graph-representation
+-- | Super-cool-graph-representation (this module is not used now)
 --
 -- There are 3 goals in optimization:
 --

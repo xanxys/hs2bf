@@ -1,17 +1,19 @@
 name:            hs2bf
 cabal-version:   >=1.2
-version:         0.5
+version:         0.6
 author:          xanxys
 maintainer:      xanxys@gmail.com
 synopsis:        Haskell to Brainfu*k compiler
 license:         BSD3
 license-File:    LICENSE
 category:        Compiler
-description:     Haskell to Brainfu*k compiler.
+description:
+    Proof of concept implementation of Haskell to Brainfu*k compiler.
+    You can find examples of compilable codes at http://www.xanxys.net/public/hs2bf-demo/
 build-type:      Simple
 data-files:      Prelude.hs
 data-dir:        test
-tested-with:     GHC==6.10.4
+tested-with:     GHC==6.10.4,GHC==6.12.1
 extra-source-files:
     Front.hs Core.hs GMachine.hs SAM.hs SCGR.hs Brainfuck.hs
     Util.hs SRuntime.hs
