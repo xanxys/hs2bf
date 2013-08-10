@@ -1,6 +1,6 @@
 #!/bin/env fish
 
-set PROG ./hs2bf
+set PROG dist/build/hs2bf/hs2bf
 set FILE $argv[1]
 
 function compile

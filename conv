@@ -1,6 +1,8 @@
 #!/bin/env fish
 
-set PROG ./hs2bf
+cd bfi
+./conv
+cd ..
 
-ghc --make Main -O -o $PROG
-
+cabal configure
+cabal build

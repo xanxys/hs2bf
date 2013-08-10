@@ -16,7 +16,7 @@ data-files:      Prelude.hs
 data-dir:        test
 tested-with:     GHC==6.12.1
 extra-source-files:
-    Front.hs Core.hs GMachine.hs SAM.hs SCGR.hs Brainfuck.hs
+    Front.hs Core.hs GMachine.hs SAM.hs Brainfuck.hs
     Util.hs SRuntime.hs
 executable hs2bf
     main-is: Main.hs

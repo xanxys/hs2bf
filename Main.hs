@@ -22,7 +22,6 @@ import qualified Front
 import qualified Core
 import qualified GMachine
 import qualified SAM
-import qualified SCGR
 import qualified Brainfuck
 
 
