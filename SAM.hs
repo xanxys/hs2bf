@@ -42,11 +42,10 @@ import Numeric
 import Text.Printf
 
 import Util
-import SCGR
 import Brainfuck
 
 
-compile :: SAM -> Process SCGR
+compile :: SAM -> Process BF
 compile (SAM _ [SProc _ [] ss])=return $ BF $ soptBF $ concatMap compileS ss
 
 soptBF []=[]

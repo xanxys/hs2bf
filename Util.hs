@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, OverlappingInstances #-}
 -- | Modular error reporting and common functions
 --
 -- note for future me: Arrow vs. Monad
@@ -45,6 +45,7 @@ data CompileError
 instance Show CompileError where
     show (CompileError m p d)=m++":"++p++":\n"++d
     show (CompileErrorN m d ps)=m++":\n"++d++"\n"++concatMap (\x->"in "++x++"\n") ps
+
 
 instance Error [CompileError] where
     noMsg=[]
