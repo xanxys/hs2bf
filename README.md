@@ -42,7 +42,7 @@ The main hurdle is slow execution speed (and long turn around time when debuggin
 * Most of Prelude
 
 Lacking explicit support for polymorphism doesn't mean you can't use
-polymorphic functions. For example, `map :: a -> a` works perfectly fine for any `a` in hs2bf. It merely can't **prove** the correctness of the types when compiling. (You know, a type system is a contraint on pure lambda.)
+polymorphic functions. For example, `map :: (a -> b) -> [a] -> [b]` works erfectly fine for any `a` or `b` in hs2bf. It merely can't **prove** the correctness of the types when compiling. (You know, a type system is a contraint on pure lambda.)
 
 But lack of class/instance does mean you can't do things like `show :: Show a => a -> String` or `forall`.
 
