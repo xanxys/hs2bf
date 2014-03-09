@@ -12,7 +12,7 @@ void run(FILE *log,char *code){
     
     unsigned char *ptr=ptr_base;
     
-    long stp=0;
+    long long stp=0;
     while(*code){
         /*
         if(log)
