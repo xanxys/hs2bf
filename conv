@@ -1,4 +1,4 @@
-#!/bin/env fish
+#!/bin/env sh
 
 cd bfi
 ./conv
