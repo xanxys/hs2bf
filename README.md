@@ -50,43 +50,51 @@ But lack of class/instance does mean you can't do things like `show :: Show a =>
 ## Compilation & Testing
 Run `./conv` followed by `./auto-test` (you'll need fish shell for both).
 
-If it's ok, the result will look like below (the ordering and runtime may differ):
+If it's ok, the result will look like below (the runtime may differ):
 
 ```
 === test/Halt.hs ===
 71330 steps
 user:0.00 sys:0.00
+PASSED
 
 === test/Const.hs ===
-~2422548 steps
+2422548 steps
 user:0.01 sys:0.00
+PASSED
 
 === test/ExplicitCase.hs ===
-o2873704 steps
-user:0.01 sys:0.00
+2873704 steps
+user:0.02 sys:0.00
+PASSED
 
 === test/Hello.hs ===
-Hello!540952260 steps
-user:2.76 sys:0.00
+540952260 steps
+user:2.82 sys:0.00
+PASSED
 
 === test/LocalFun.hs ===
-~14103014 steps
+14103014 steps
 user:0.08 sys:0.00
+PASSED
 
 === test/Lambda.hs ===
-A12416333 steps
+12416333 steps
 user:0.07 sys:0.00
+PASSED
 
 === test/Arithmetic.hs ===
-o441625467 steps
-user:2.22 sys:0.00
+441625467 steps
+user:2.27 sys:0.00
+PASSED
 
 === test/ShowList.hs ===
-123
-2421699790 steps
-user:12.13 sys:0.01
+1031462671 steps
+user:5.36 sys:0.00
+PASSED
 
 === test/QuickSort.hs ===
-best28503865233 steps
-user:141.97 sys:0.40
+28503865233 steps
+user:144.20 sys:0.17
+PASSED
 ```

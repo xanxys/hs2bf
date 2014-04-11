@@ -1,23 +1,46 @@
 #!/bin/env fish
 
+# test_bf ::
+#   FilePath -> -- ^ Haskell code to be compiled and run
+#   String -> -- ^ Expected output
+#   IO ()
 function test_bf
-    echo "=== $argv[1] ==="
-    rm -f test/(basename $argv[1] .hs).bf
-    dist/build/hs2bf/hs2bf --make $argv[1] > test/(basename $argv[1] .hs).bf
-    time -f 'user:%U sys:%S' bfi/bfi test/(basename $argv[1] .hs).bf
+    set hs_path $argv[1]
+    set bf_path test/(basename $argv[1] .hs).bf
+    set expected $argv[2]
+
+    echo "=== $hs_path ==="
+
+    rm -f $bf_path
+    dist/build/hs2bf/hs2bf --make $hs_path > $bf_path
+
+    set result (time -f 'user:%U sys:%S' bfi/bfi $bf_path)
+    
+    if test "$result" = "$expected"
+        set_color green
+        echo "PASSED"
+        set_color normal
+    else
+        set_color red
+        echo "FAILED"
+        set_color normal
+        echo "expected: " $expected
+        echo "actual: " $result
+    end
+    
     echo ""
 end
 
 
-test_bf test/Halt.hs
-and test_bf test/Const.hs
-and test_bf test/ExplicitCase.hs
-and test_bf test/Hello.hs
-and test_bf test/LocalFun.hs
-and test_bf test/Lambda.hs
-and test_bf test/Arithmetic.hs
-and test_bf test/ShowList.hs
-and test_bf test/QuickSort.hs
+test_bf test/Halt.hs ""
+and test_bf test/Const.hs "~"
+and test_bf test/ExplicitCase.hs "o"
+and test_bf test/Hello.hs "Hello!"
+and test_bf test/LocalFun.hs "~"
+and test_bf test/Lambda.hs "A"
+and test_bf test/Arithmetic.hs "o"
+and test_bf test/ShowList.hs "123"
+and test_bf test/QuickSort.hs "best"
 # and test_bf test/TypeClass.hs
 # and test_bf test/ConstPattern.hs
 # and test_bf test/
